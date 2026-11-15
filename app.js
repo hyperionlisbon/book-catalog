@@ -6,7 +6,8 @@
 
 const GENRES=["Biography","Dystopia","Fantasy","Fiction","Graphic Novel","Historical Fantasy","Historical Fiction","History, Non-Fiction","Literary Fiction","Manga","Manhua","Manwha","Non-Fiction","Romance","Science Books","Science Fiction","Travel Book"];
 const SUBGENRES=["AGI","AI","Asian","BL","Children","Classic","Cyberpunk","Dark Academia","Dark Fantasy","Dragons","Faeries","Fantasy Adventure","Gods","Gothic","High Fantasy","Isekai","LitRPG","Medieval","Memoir","Mystery","Nature Powers","Other Civilizations","Other Worlds","Post-Apocalyptic","Romantsy","Shōjo","Shōnen","Soft-horror","Space","Special School","Trials","VRMMORPG","Vampires","Vitorian England","War","Witches","Witty","Wizzards","Xianxia","YA","Zombies"];
-const STATUSES=["Reading","TBR","Read","DNF"];
+const STATUSES=["Reading","TBR","Read","DNF","Wishlist"];
+const owned=b=>b.status!=="Wishlist";
 const LANGS={en:"English",pt:"Portuguese",es:"Spanish",fr:"French",de:"German",it:"Italian",ja:"Japanese",ko:"Korean",zh:"Chinese",nl:"Dutch"};
 const ADD_STEPS=[["Front cover","Fit the cover inside the frame"],["Back cover","Barcode inside the frame"],["Copyright page","Page with publisher and year, inside the frame"],["Anything else","Optional: spine or flap"]];
 const COVER_STEPS=[["Front cover","Fit the cover inside the frame"]];
@@ -26,7 +27,7 @@ const store={
   del(k){try{localStorage.removeItem(k)}catch(e){}}
 };
 const stars=n=>{n=+n||0;return n?`<span class="stars" aria-label="${n} of 5 stars">${"★".repeat(n)}<span class="off">${"★".repeat(5-n)}</span></span>`:""};
-const statusLabel=s=>s==="TBR"?"To read":s;
+const statusLabel=s=>s==="TBR"?"To read":s==="Wishlist"?"Wishlist":s;
 const isbnDigits=s=>String(s||"").split(/[,;\s]+/).map(x=>x.replace(/[^0-9Xx]/g,"")).filter(x=>x.length===10||x.length===13);
 const hash=s=>{let h=7;for(const c of String(s))h=(h*31+c.charCodeAt(0))|0;return Math.abs(h)};
 // Each book keeps the same spine colour and thickness every time.
@@ -35,6 +36,7 @@ const ICON={
   cam:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>`,
   back:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`,
   award:`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9 13.5 8 21l4-2 4 2-1-7.5"/></svg>`,
+  scan:`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
 let toastT;
@@ -83,8 +85,8 @@ function upsertBook(b){b={...b,id:+b.id};books=books.filter(x=>x.id!==b.id).conc
 /* ---------- list: the shelf ---------- */
 function filtered(){
   const q=norm(st.q).trim();
-  let r=books.filter(b=>(!st.status||b.status===st.status)&&(!st.genre||b.genre===st.genre)&&(!st.lang||b.language===st.lang));
-  if(q){const terms=q.split(/\s+/);r=r.filter(b=>{const hay=norm([b.title,b.author,b.series,b.publisher,b.isbn,b.genre,b.subgenre,b.comments].join(" "));return terms.every(t=>hay.includes(t))})}
+  let r=books.filter(b=>(st.status?b.status===st.status:owned(b))&&(!st.genre||b.genre===st.genre)&&(!st.lang||b.language===st.lang));
+  if(q){const terms=q.split(/\s+/);r=r.filter(b=>{const hay=norm([b.title,b.author,b.series,b.publisher,b.isbn,b.genre,b.subgenre,b.comments,b.location].join(" "));return terms.every(t=>hay.includes(t))})}
   const by=f=>(a,b)=>norm(f(a)).localeCompare(norm(f(b)));
   const sorters={"id-desc":(a,b)=>b.id-a.id,"id-asc":(a,b)=>a.id-b.id,title:by(b=>b.title),author:by(b=>b.author),
     rating:(a,b)=>(+b.rating||0)-(+a.rating||0)||a.id-b.id,
@@ -93,8 +95,9 @@ function filtered(){
 }
 function renderChrome(){
   const counts={};books.forEach(b=>counts[b.status]=(counts[b.status]||0)+1);
-  $("#tally").innerHTML=books.length?`<span><b>${books.length}</b>books</span><span class="s-read"><b>${counts.Read||0}</b>read</span><span class="s-tbr"><b>${counts.TBR||0}</b>to read</span>`:"";
-  $("#statusChips").innerHTML=[["","All",books.length],...STATUSES.map(s=>[s,statusLabel(s),counts[s]||0])]
+  const nOwned=books.filter(owned).length;
+  $("#tally").innerHTML=books.length?`<span><b>${nOwned}</b>books</span><span class="s-read"><b>${counts.Read||0}</b>read</span><span class="s-tbr"><b>${counts.TBR||0}</b>to read</span>`:"";
+  $("#statusChips").innerHTML=[["","All",nOwned],...STATUSES.map(s=>[s,statusLabel(s),counts[s]||0])]
     .map(([v,l,n])=>`<button class="chip" data-status="${esc(v)}" aria-pressed="${st.status===v}">${esc(l)}<span class="n">${n}</span></button>`).join("");
   const uniq=k=>[...new Set(books.map(b=>b[k]).filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b));
   const fill=(sel,vals,label,cur)=>{const el=$(sel);el.innerHTML=`<option value="">${label}</option>`+vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");el.value=vals.includes(cur)?cur:""};
@@ -102,15 +105,20 @@ function renderChrome(){
   fill("#fLang",uniq("language"),"All languages",st.lang);
   $("#fSort").value=st.sort;
   $("#addBtn").hidden=!conn;
+  $("#checkBtn").hidden=!conn;
   $("#statsBtn").hidden=!conn||!books.length;
 }
+let workCount=new Map();
+function refreshWorkCount(){workCount=new Map();books.forEach(b=>{if(b.workId)workCount.set(b.workId,(workCount.get(b.workId)||0)+1)})}
+const copiesOf=b=>b.workId?books.filter(x=>x.workId===b.workId).sort((a,c)=>a.id-c.id):[b];
 function spineHtml(b){
   const sp=spineOf(b);
+  const nCopies=b.workId?(workCount.get(b.workId)||0):0;
   const series=b.series?` · ${esc(b.series)}${b.seriesNo!==""&&b.seriesNo!=null?` #${esc(b.seriesNo)}`:""}`:"";
-  const side=b.priority&&b.status!=="Read"?`<span class="tag prio">Priority</span>`
+  const side=b.status==="Wishlist"?`<span class="tag wish">Wishlist</span>`:b.priority&&b.status!=="Read"?`<span class="tag prio">Priority</span>`
     :(+b.rating?stars(b.rating):(b.status?`<span class="tag">${esc(statusLabel(b.status))}</span>`:""));
   return `<button class="spine ${sp.cls}" data-id="${+b.id}"><span class="no">${pad(+b.id)}</span>
-    <span class="txt"><span class="t">${esc(b.title)}</span><span class="a">${esc(b.author)}${series}</span></span>${side}</button>`;
+    <span class="txt"><span class="t">${esc(b.title)}</span><span class="a">${esc(b.author)}${series}${nCopies>1?` · ${nCopies} copies`:""}</span></span>${side}</button>`;
 }
 function renderList(){
   const list=$("#list");
@@ -125,7 +133,7 @@ function renderList(){
   $("#moreWrap").hidden=r.length<=st.shown;
   $("#moreBtn").textContent=`Show more (${r.length-st.shown} left)`;
 }
-function render(){renderChrome();renderList();const sv=$(".statsv");if(sv)renderStats(sv)}
+function render(){refreshWorkCount();renderChrome();renderList();const sv=$(".statsv");if(sv)renderStats(sv)}
 
 $("#q").addEventListener("input",e=>{st.q=e.target.value;st.shown=60;renderList()});
 $("#statusChips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;st.status=c.dataset.status;st.shown=60;saveView();render()});
@@ -136,6 +144,7 @@ $("#moreBtn").addEventListener("click",()=>{st.shown+=60;renderList()});
 $("#list").addEventListener("click",e=>{const sp=e.target.closest(".spine");if(sp)openBook(+sp.dataset.id)});
 $("#addBtn").addEventListener("click",openAddChoice);
 $("#settingsBtn").addEventListener("click",openSettings);
+$("#checkBtn").addEventListener("click",openCheck);
 $("#statsBtn").addEventListener("click",()=>openStats());
 
 async function loadBooks(){
@@ -223,6 +232,7 @@ function openBook(id){
       <div class="row"><span class="no">No. ${pad(b.id)}</span>${stars(b.rating)}</div>
       <h1>${esc(b.title)}</h1>
       <div class="by">${esc(b.author)}${b.series?` · ${esc(b.series)}${b.seriesNo!==""?` #${esc(b.seriesNo)}`:""}`:""}</div>
+      ${readBarHtml(b)}
       <div class="row start"><span class="pill">${esc(statusLabel(b.status||"TBR"))}</span>${b.priority?`<span class="pill prio">High priority</span>`:""}${b.dateRead&&b.dateRead!=="Not registered"?`<span class="by">Read ${esc(b.dateRead)}</span>`:""}</div>
     </div>
     <div class="book-body">
@@ -232,14 +242,23 @@ function openBook(id){
         ${fact("Edition",[b.publisher,b.editionYear].filter(Boolean).join(", "),[b.cover,b.special].filter(Boolean).join(" · "))}
         ${fact("First published",b.firstYear?String(b.firstYear):"",b.firstPublisher)}
         ${fact("Language",b.language,b.isbn?"ISBN "+b.isbn:"")}
+        ${fact("Where it is",b.location,"")}
       </div>
       ${b.awards?`<div class="award">${ICON.award}<span>${esc(b.awards)}</span></div>`:""}
+      ${copiesHtml(b)}
       <div id="delArea"></div>
       <div class="actions"><button class="btn danger" id="bkDel">Delete</button><button class="btn primary" id="bkEdit">Edit book</button></div>
     </div></div>`;
   document.body.append(v);syncScroll();
   $("#bkBack",v).onclick=closeBook;
   $("#bkEdit",v).onclick=()=>openForm(b);
+  const rb=$(".readbar",v);if(rb)rb.onclick=e=>{const x=e.target.closest("[data-act]");if(x)readAction(b,x.dataset.act,x)};
+  const cp=$(".copies",v);
+  if(cp)cp.onclick=e=>{
+    const row=e.target.closest(".copyrow");if(row&&+row.dataset.id!==b.id){openBook(+row.dataset.id);return}
+    if(e.target.closest("#cpLink"))openLinkPicker(b);
+    if(e.target.closest("#cpUnlink"))unlinkCopy(b,e.target.closest("#cpUnlink"));
+  };
   $("#bkPhoto",v).onclick=()=>openCamera({steps:COVER_STEPS,max:1},async r=>{
     if(!r.photos.length)return;
     const btn=$("#bkPhoto",v);btn.disabled=true;btn.innerHTML=`${ICON.cam}<span>Saving photo…</span>`;
@@ -264,6 +283,160 @@ function openBook(id){
     if(url){const img=new Image();img.alt=`Photo of your copy of ${b.title}`;img.src=url;inner.replaceWith(img)}
     else{inner.className="empty";inner.innerHTML=`<div class="ghost">${esc(b.title)}</div><span class="small">The photo couldn’t be found. Tap “Retake photo”.</span>`}
   }).catch(e=>{if(v.isConnected){inner.textContent="Couldn’t load the photo.";if(e.code==="unauthorized")handleApiError(e)}});
+}
+
+
+
+/* ---------- one-tap reading ---------- */
+const thisMonth=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")};
+function readBarHtml(b){
+  const btn=(act,label,cls="")=>`<button class="rbtn ${cls}" data-act="${act}">${label}</button>`;
+  const s=b.status||"TBR";
+  const html=s==="Wishlist"?btn("bought","I bought it","main")
+    :s==="Reading"?btn("finish","Finished","main")+btn("dnf","Stopped reading")
+    :(s==="TBR"||s==="DNF")?btn("start","Start reading","main")+(s==="TBR"?"":btn("finish","Finished")):"";
+  return html?`<div class="readbar">${html}</div>`:"";
+}
+async function quickSave(b,changes){
+  const rec={...b,...changes};delete rec.hasPhoto;
+  const d=await api("save",{book:rec});return upsertBook(d.book);
+}
+async function readAction(b,act,btn){
+  btn.disabled=true;
+  try{
+    if(act==="start"){await quickSave(b,{status:"Reading"});toast("Enjoy! Marked as reading");render();openBook(b.id)}
+    else if(act==="dnf"){await quickSave(b,{status:"DNF"});toast("Marked as stopped (DNF)");render();openBook(b.id)}
+    else if(act==="bought"){await quickSave(b,{status:"TBR"});render();toast("Moved to your shelves");openBook(b.id);openForm(books.find(x=>x.id===b.id))}
+    else if(act==="finish"){const saved=await quickSave(b,{status:"Read",dateRead:thisMonth()});render();openBook(b.id);askRating(saved)}
+  }catch(e){btn.disabled=false;handleApiError(e,"Couldn’t update")}
+}
+function askRating(b){
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">Finished · ${esc(thisMonth())}</div><h2>${esc(b.title)}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <p>How was it?</p><div class="rate big" id="qRate">${[1,2,3,4,5].map(n=>`<button type="button" data-n="${n}" aria-label="${n} star${n>1?"s":""}" class="${n<=(+b.rating||0)?"":"off"}">★</button>`).join("")}</div>
+    <div class="actions"><button class="btn" data-close>Skip</button></div>`);
+  $("#qRate",s).onclick=async e=>{const x=e.target.closest("button");if(!x)return;const n=+x.dataset.n;
+    $$("#qRate button",s).forEach(y=>y.classList.toggle("off",+y.dataset.n>n));
+    try{await quickSave(books.find(y=>y.id===b.id)||b,{rating:n});closeSheet();render();toast(`Rated ${n} star${n>1?"s":""}`);openBook(b.id)}catch(err){handleApiError(err,"Couldn’t save the rating")}};
+}
+
+/* ---------- do I own this? ---------- */
+const isbn13=d=>{d=String(d||"").replace(/[^0-9Xx]/g,"");if(d.length===13)return d;if(d.length!==10)return "";const c="978"+d.slice(0,9);let s=0;for(let i=0;i<12;i++)s+=(+c[i])*(i%2?3:1);return c+((10-s%10)%10)};
+function sameIsbn(b,isbn){const want=isbn13(isbn);return want&&isbnDigits(b.isbn).some(x=>isbn13(x)===want)}
+function openCheck(){
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">In a bookshop?</div><h2>Do I own this?</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <button class="btn primary big" id="ckScan">${ICON.scan}Scan the barcode</button>
+    <div class="inrow"><input id="ckQ" class="field" type="search" autocomplete="off" placeholder="…or type an ISBN, title or author"><button class="btn" id="ckGo">Check</button></div>
+    <div id="ckOut"></div>`);
+  const out=$("#ckOut",s), q=$("#ckQ",s);
+  const go=()=>runCheck(q.value,out);
+  $("#ckGo",s).onclick=go;q.onkeydown=e=>{if(e.key==="Enter")go()};
+  $("#ckScan",s).onclick=()=>openCamera({steps:[["Barcode","Point the camera at the barcode"]],max:1,autoIsbn:true},async r=>{
+    openCheck();const o=$("#ckOut");
+    if(r.isbn){$("#ckQ").value=r.isbn;runCheck(r.isbn,o);return}
+    if(!r.photos.length)return;
+    if(!hasClaude||!budgetLeft()){o.innerHTML=`<p class="small muted">The barcode couldn’t be read from the photo. Type the ISBN instead.</p>`;return}
+    o.innerHTML=`<p class="small muted">Reading the photo…</p>`;
+    try{const d=await api("read",{images:[await blobToB64(r.photos[0].blob)]});const x=d.result||{};if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
+      const isbn=isbnDigits(x.isbn)[0];const qq=isbn||[x.title,x.author].filter(Boolean).join(" ");$("#ckQ").value=qq;runCheck(qq,o)}
+    catch(e){o.innerHTML=`<p class="small err">${esc(e.message)}</p>`}
+  });
+}
+async function runCheck(raw,out){
+  raw=String(raw||"").trim();if(!raw){out.innerHTML="";return}
+  const S=window.BCStats;const digits=raw.replace(/[^0-9Xx]/g,"");
+  const card=(cls,title,body)=>`<section class="card verdict ${cls}"><div class="vd">${title}</div>${body}</section>`;
+  const shelf=list=>`<div class="shelf drill">${list.map(spineHtml).join("")}</div>`;
+  const wire=()=>{$$(".drill",out).forEach(d=>d.onclick=e=>{const sp=e.target.closest(".spine");if(sp){closeSheet();openBook(+sp.dataset.id)}});
+    const w=$("#ckWish",out);if(w)w.onclick=async()=>{w.disabled=true;try{const d=await api("save",{book:{...w._info,status:"Wishlist"}});upsertBook(d.book);render();toast("Added to your wishlist");runCheck(raw,out)}catch(e){w.disabled=false;handleApiError(e,"Couldn’t add")}};
+    const a=$("#ckAdd",out);if(a)a.onclick=()=>openForm(null,null,a._info);};
+  if(digits.length===10||digits.length===13){
+    const exact=books.filter(b=>sameIsbn(b,digits));
+    const own=exact.filter(owned), wish=exact.filter(b=>!owned(b));
+    if(own.length){const all=[...new Map(own.flatMap(copiesOf).map(x=>[x.id,x])).values()];
+      out.innerHTML=card("yes","✓ Yes, you own this edition",`<p class="small">${all.length>1?`You have ${all.length} copies of this book.`:"One copy, on your shelves."}</p>${shelf(all)}`);wire();return}
+    if(wish.length){out.innerHTML=card("wish","♡ It’s on your wishlist",`${shelf(wish)}<p class="small muted">Open it and tap “I bought it” when you buy it.</p>`);wire();return}
+    out.innerHTML=`<p class="small muted">Not found by ISBN in your catalog. Looking it up…</p>`;
+    const info=await lookupIsbn(digits);
+    if(info){const key=S.normT(S.workTitle(info.title)), au=S.normT(info.author);
+      const other=books.filter(b=>owned(b)&&S.normT(S.workTitle(b.title))===key&&(!au||S.normT(b.author).includes(au.split(" ").pop())));
+      const desc=`<p><b>${esc(info.title)}</b><br><span class="small muted">${esc([info.author,info.publisher,info.editionYear,info.language].filter(Boolean).join(" · "))}</span></p>`;
+      if(other.length){out.innerHTML=card("maybe","≈ You own another edition",`${desc}${shelf(other)}<div class="actions"><button class="btn" id="ckWish">Add this edition to wishlist</button></div>`)}
+      else out.innerHTML=card("no","✗ Not in your catalog",`${desc}<div class="actions"><button class="btn" id="ckWish">Add to wishlist</button><button class="btn primary" id="ckAdd">I’m buying it: add</button></div>`);
+      const pre={title:info.title,author:info.author,publisher:info.publisher,editionYear:info.editionYear,language:info.language,isbn:[...new Set([digits,...isbnDigits(info.isbn)])].join(", ")};
+      if($("#ckWish",out))$("#ckWish",out)._info=pre;if($("#ckAdd",out))$("#ckAdd",out)._info=pre;wire();return}
+    out.innerHTML=card("no","✗ Not in your catalog",`<p class="small muted">ISBN ${esc(digits)} isn’t in the free book catalogs either.</p><div class="actions"><button class="btn primary" id="ckAdd">Add it by hand</button></div>`);
+    $("#ckAdd",out)._info={isbn:digits,status:"Wishlist"};wire();return;
+  }
+  const t=norm(raw).split(/\s+/).filter(Boolean);
+  const hits=books.filter(b=>{const h=norm([b.title,b.author,b.series].join(" "));return t.every(w=>h.includes(w))});
+  if(hits.length){const own=hits.filter(owned);
+    out.innerHTML=card(own.length?"yes":"wish",own.length?`✓ ${own.length} matching book${own.length>1?"s":""} on your shelves`:"♡ Only on your wishlist",shelf(hits.slice(0,30)));wire();return}
+  out.innerHTML=card("no","✗ Nothing matches in your catalog",`<div class="actions"><button class="btn" id="ckAdd">Add to wishlist</button></div>`);
+  $("#ckAdd",out)._info={title:raw,status:"Wishlist"};wire();
+}
+
+/* ---------- copies of the same book ---------- */
+function copyLine(x){return [x.language,x.cover,x.publisher,x.editionYear,x.special].filter(Boolean).map(String).join(" · ")}
+function copiesHtml(b){
+  const g=copiesOf(b);
+  const rows=g.length>1?g.map(x=>`<button class="copyrow ${x.id===b.id?"me":""}" data-id="${x.id}"><span class="no">${pad(x.id)}</span><span class="cl"><span class="ct">${esc(x.title)}</span><span class="cd">${esc(copyLine(x))}</span></span>${x.id===b.id?`<span class="tag">This copy</span>`:""}</button>`).join(""):"";
+  return `<section class="card copies"><div class="sectlabel">${g.length>1?`${g.length} copies of this book`:"Copies"}</div>
+    ${rows||`<p class="small muted">Only this copy is in your catalog.</p>`}
+    <div class="actions"><button class="btn" id="cpLink">Link another copy</button>${g.length>1?`<button class="btn danger" id="cpUnlink">Unlink this copy</button>`:""}</div></section>`;
+}
+async function setWork(ids,workId){
+  const d=await api("set_work",{ids,workId});
+  d.books.forEach(upsertBook);render();return d.books;
+}
+async function linkCopies(a,b){
+  const ga=copiesOf(a),gb=copiesOf(b);
+  const all=[...new Map([...ga,...gb].map(x=>[x.id,x])).values()];
+  const wid=a.workId||b.workId||("W"+Math.min(...all.map(x=>x.id)));
+  const ids=all.filter(x=>x.workId!==wid).map(x=>x.id);
+  if(ids.length)await setWork(ids,wid);
+  return wid;
+}
+async function unlinkCopy(b,btn){
+  const rest=copiesOf(b).filter(x=>x.id!==b.id);
+  if(btn)btn.disabled=true;
+  try{await setWork(rest.length===1?[b.id,rest[0].id]:[b.id],"");toast("Unlinked");openBook(b.id)}
+  catch(e){if(btn)btn.disabled=false;handleApiError(e,"Couldn’t unlink")}
+}
+function openLinkPicker(b){
+  const S=window.BCStats, mine=new Set(copiesOf(b).map(x=>x.id)), key=S.workKey(b);
+  const cand=books.filter(x=>!mine.has(x.id));
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">Link a copy of</div><h2>${esc(S.workTitle(b.title))}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <label class="search" for="lkQ"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="lkQ" type="search" autocomplete="off" placeholder="Search your books"></label>
+    <p class="small muted" id="lkHint"></p><div class="drill" id="lkList"></div>`);
+  const q=$("#lkQ",s);q.value=S.workTitle(b.title);
+  const paint=()=>{const t=norm(q.value).trim().split(/\s+/).filter(Boolean);
+    const likely=cand.filter(x=>S.workKey(x)===key);
+    let list=t.length?cand.filter(x=>{const h=norm([x.title,x.author,x.isbn,x.publisher].join(" "));return t.every(w=>h.includes(w))}):cand;
+    list=[...likely.filter(x=>list.includes(x)),...list.filter(x=>!likely.includes(x))].slice(0,40);
+    $("#lkHint",s).textContent=likely.length?"Likely copies are listed first. Tap the copy to link.":"Tap the copy to link.";
+    $("#lkList",s).innerHTML=list.length?`<div class="shelf">${list.map(spineHtml).join("")}</div>`:`<p class="muted small">No matching books.</p>`};
+  q.oninput=paint;paint();
+  $("#lkList",s).onclick=async e=>{const sp=e.target.closest(".spine");if(!sp)return;const other=books.find(x=>x.id===+sp.dataset.id);
+    $("#lkHint",s).textContent="Linking…";
+    try{await linkCopies(b,other);closeSheet();toast("Linked as copies of the same book");openBook(b.id)}catch(err){handleApiError(err,"Couldn’t link")}};
+}
+function openCopySuggestions(){
+  const groups=window.BCStats.suggestCopies(books.filter(owned));
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${groups.length} possible group${groups.length===1?"":"s"}</div><h2>Link copies</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <p class="small muted">These books share the same original title, author and volume number. Untick any that aren’t copies of the same book (for example, a book split into two parts).</p>
+    ${groups.map((g,i)=>`<label class="card sugg" for="sg${i}"><span class="sg-top"><input type="checkbox" id="sg${i}" data-i="${i}" checked><b>${esc(window.BCStats.workTitle(g[0].title))}</b><span class="muted small">${g.length} copies</span></span>
+      ${g.map(x=>`<span class="sg-row"><span class="mono">${pad(x.id)}</span> ${esc(copyLine(x))}</span>`).join("")}</label>`).join("")||`<p class="muted">No unlinked copies found.</p>`}
+    <div class="actions"><span class="small left" id="sgMsg"></span><button class="btn" data-close>Cancel</button>${groups.length?`<button class="btn primary" id="sgGo">Link selected</button>`:""}</div>`);
+  const go=$("#sgGo",s);if(!go)return;
+  go.onclick=async()=>{
+    const pick=$$("input[data-i]",s).filter(x=>x.checked).map(x=>groups[+x.dataset.i]);
+    if(!pick.length){$("#sgMsg",s).textContent="Tick at least one group.";return}
+    go.disabled=true;let done=0;
+    try{for(const g of pick){$("#sgMsg",s).textContent=`Linking ${done+1} of ${pick.length}…`;
+        const wid=(g.find(x=>x.workId)||{}).workId||("W"+g[0].id);const ids=g.filter(x=>x.workId!==wid).map(x=>x.id);if(ids.length)await setWork(ids,wid);done++}
+      closeSheet();toast(`Linked ${done} group${done===1?"":"s"} of copies`)}
+    catch(e){go.disabled=false;handleApiError(e,`Linked ${done} of ${pick.length}, then stopped`)}
+  };
 }
 
 /* ---------- add: choose how ---------- */
@@ -315,7 +488,8 @@ async function findIsbn(src){
 }
 
 function openCamera(opts,onDone){
-  const steps=opts.steps, max=opts.max;
+  const steps=opts.steps||[["",""]], max=opts.max||1, ses=opts.session||null;
+  const scanIsbn=max>1||!!opts.autoIsbn;
   const photos=[];let isbn="";let stream=null;let scanTimer=null;let closed=false;
   const root=document.createElement("div");root.className="cam";root.setAttribute("role","dialog");root.setAttribute("aria-label","Camera");
   root.innerHTML=`
@@ -324,19 +498,25 @@ function openCamera(opts,onDone){
    <div class="cam-bottom"><div class="cam-thumbs" id="camThumbs"></div><button class="shutter" id="shutter" aria-label="Take photo" disabled></button><button class="cam-done" id="camDone" disabled>Done</button></div>`;
   document.body.append(root);syncScroll();
   const video=$("#camVideo",root), msg=$("#camMsg",root), shutter=$("#shutter",root), done=$("#camDone",root), stepEl=$("#camStep",root);
-  const paintStep=()=>{const i=Math.min(photos.length,steps.length-1);
+  const paintStep=()=>{if(ses){const b=ses.current();
+      stepEl.innerHTML=b?`No. ${pad(b.id)} · ${esc(b.title)}<small>${esc([b.author,b.location].filter(Boolean).join(" · "))} · ${ses.left()} left</small>`:`All done<small>Tap Finish</small>`;
+      $("#camThumbs",root).innerHTML=`<button class="cam-skip" id="camSkip" ${b?"":"disabled"}>Skip</button><span class="cam-count">${esc(ses.status())}</span>`;
+      const sk=$("#camSkip",root);if(sk)sk.onclick=()=>{ses.skip();paintStep()};
+      done.disabled=false;done.textContent="Finish";shutter.disabled=!stream||!b;return}
+    const i=Math.min(photos.length,steps.length-1);
     stepEl.innerHTML=photos.length>=max?`All set<small>Tap Done</small>`:`${steps.length>1?(photos.length+1)+". ":""}${esc(steps[i][0])}<small>${esc(steps[i][1])}</small>`;
     $("#camThumbs",root).innerHTML=photos.map((p,i)=>`<img src="${p.url}" alt="Photo ${i+1}">`).join("");
     done.disabled=!photos.length;shutter.disabled=!stream||photos.length>=max};
   const showIsbn=()=>{const chip=$("#camChip",root);chip.textContent=`Barcode read: ${isbn}`;chip.hidden=!isbn};
   const stop=()=>{clearInterval(scanTimer);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null};
   const close=()=>{if(closed)return;closed=true;stop();root.remove();syncScroll()};
-  $("#camClose",root).onclick=()=>{photos.forEach(p=>URL.revokeObjectURL(p.url));close()};
+  $("#camClose",root).onclick=()=>{photos.forEach(p=>URL.revokeObjectURL(p.url));close();if(ses)onDone({photos:[],isbn:""})};
   done.onclick=()=>{close();onDone({photos,isbn})};
+  if(ses)ses.repaint=()=>{if(!closed)paintStep()};
   const addBlob=blob=>{photos.push({blob,url:URL.createObjectURL(blob)});paintStep()};
   const fallbackHtml=`<label class="btn">Use the phone’s camera app instead<input type="file" accept="image/*" capture="environment" id="camFile" hidden></label>`;
   const wireFallback=()=>{const f=$("#camFile",root);if(!f)return;f.onchange=async()=>{const file=f.files[0];f.value="";if(!file||photos.length>=max)return;
-    try{const bmp=await createImageBitmap(file);const {blob,canvas}=await shrink(bmp,bmp.width,bmp.height);if(!isbn&&max>1){isbn=await findIsbn(canvas);showIsbn()}addBlob(blob)}catch(e){toast("That photo couldn’t be used.")}}};
+    try{const bmp=await createImageBitmap(file);const {blob,canvas}=await shrink(bmp,bmp.width,bmp.height);if(!isbn&&scanIsbn){isbn=await findIsbn(canvas);showIsbn();if(isbn&&opts.autoIsbn){done.onclick();return}}addBlob(blob)}catch(e){toast("That photo couldn’t be used.")}}};
 
   async function start(){
     msg.innerHTML=`<div class="stack"><p>Starting the camera…</p></div>`;
@@ -346,7 +526,7 @@ function openCamera(opts,onDone){
       store.set("bc-cam-ok",true); // allowed once: next time open straight away
       video.srcObject=stream;await video.play().catch(()=>{});
       msg.innerHTML="";msg.hidden=true;$("#camFrame",root).hidden=false;paintStep();
-      if(max>1&&await getDetector()){scanTimer=setInterval(async()=>{if(isbn||!video.videoWidth)return;const v=await findIsbn(video);if(v){isbn=v;showIsbn();if(navigator.vibrate)navigator.vibrate(60)}},450)}
+      if(scanIsbn&&await getDetector()){scanTimer=setInterval(async()=>{if(isbn||!video.videoWidth)return;const v=await findIsbn(video);if(v){isbn=v;showIsbn();if(navigator.vibrate)navigator.vibrate(60);if(opts.autoIsbn)setTimeout(()=>done.onclick(),400)}},450)}
     }catch(e){
       stream=null;paintStep();msg.hidden=false;
       if(e&&(e.name==="NotAllowedError"||e.name==="SecurityError")){
@@ -364,7 +544,7 @@ function openCamera(opts,onDone){
     if(!stream||!video.videoWidth||photos.length>=max)return;
     shutter.disabled=true;
     const fl=$("#camFlash",root);fl.classList.remove("on");void fl.offsetWidth;fl.classList.add("on");
-    try{if(!isbn&&max>1){const v=await findIsbn(video);if(v){isbn=v;showIsbn()}}const {blob}=await shrink(video,video.videoWidth,video.videoHeight,frameCrop(video,$("#camFrame",root)));addBlob(blob)}
+    try{if(!isbn&&scanIsbn&&!ses){const v=await findIsbn(video);if(v){isbn=v;showIsbn()}}const {blob}=await shrink(video,video.videoWidth,video.videoHeight,frameCrop(video,$("#camFrame",root)));if(ses){ses.shot(blob);shutter.disabled=false;paintStep();return}addBlob(blob)}
     catch(e){toast("Couldn’t take the photo. Try again.")}
     paintStep();
   };
@@ -409,8 +589,8 @@ function findDupe(r,selfId){
 }
 function datalist(id,vals){return `<datalist id="${id}">${vals.map(v=>`<option value="${esc(v)}"></option>`).join("")}</datalist>`}
 
-function openForm(b,capture){
-  const isNew=!b;const v=b?{...b}:{status:"TBR",rating:0};
+function openForm(b,capture,pre){
+  const isNew=!b;const v=b?{...b}:{status:"TBR",rating:0,...(pre||{})};
   const uniq=k=>[...new Set(books.map(x=>x[k]).filter(Boolean).map(String))].sort();
   const inp=(k,label,cls="",extra="")=>`<div class="f ${cls}" data-f="${k}"><label for="i-${k}">${label}<span class="src"></span></label><input id="i-${k}" name="${k}" type="text" value="${esc(v[k]??"")}" autocomplete="off" ${extra}></div>`;
   const photos=capture?capture.photos:[];let coverIdx=photos.length?0:-1;
@@ -444,14 +624,15 @@ function openForm(b,capture){
      ${inp("awards","Awards","",'placeholder="Hugo 1990; Locus 1990"')}
     </div></fieldset>
     <fieldset class="fs"><legend>My reading</legend><div class="grid">
-     <div class="f"><span class="lbl">Status</span><div class="seg" id="segStatus">${["TBR","Reading","Read","DNF"].map(x=>`<button type="button" data-v="${x}" aria-pressed="${v.status===x}">${statusLabel(x)}</button>`).join("")}</div></div>
+     <div class="f"><span class="lbl">Status</span><div class="seg" id="segStatus">${["TBR","Reading","Read","DNF","Wishlist"].map(x=>`<button type="button" data-v="${x}" aria-pressed="${v.status===x}">${statusLabel(x)}</button>`).join("")}</div></div>
      <div class="f h full-sm"><span class="lbl">Rating</span><div class="rate" id="rate">${[1,2,3,4,5].map(n=>`<button type="button" data-n="${n}" aria-label="${n} star${n>1?"s":""}" class="${n<=(+v.rating||0)?"":"off"}">★</button>`).join("")}</div></div>
      ${inp("dateRead","Date read","h full-sm",'placeholder="YYYY-MM"')}
      <div class="f h full-sm"><label for="i-priority">Priority to read</label><select id="i-priority" name="priority"><option value="">Normal</option><option value="High">High</option></select></div>
+     ${inp("location","Where it is","",'list="dl-location" placeholder="Room, shelf…"')}
      <div class="f"><label for="i-comments">Comments</label><textarea id="i-comments" name="comments">${esc(v.comments||"")}</textarea></div>
     </div></fieldset>
     ${datalist("dl-author",uniq("author"))}${datalist("dl-series",uniq("series"))}${datalist("dl-publisher",[...new Set([...uniq("publisher"),...uniq("firstPublisher")])].sort())}
-    ${datalist("dl-language",[...new Set(["English","Portuguese",...uniq("language")])])}${datalist("dl-genre",[...new Set([...GENRES,...uniq("genre")])].sort())}${datalist("dl-sub",SUBGENRES)}${datalist("dl-special",uniq("special"))}
+    ${datalist("dl-language",[...new Set(["English","Portuguese",...uniq("language")])])}${datalist("dl-genre",[...new Set([...GENRES,...uniq("genre")])].sort())}${datalist("dl-sub",SUBGENRES)}${datalist("dl-special",uniq("special"))}${datalist("dl-location",uniq("location"))}
    </form>
    <div id="dupArea"></div>
    <div class="actions"><span class="small left" id="formStatus"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="saveBtn">${isNew?"Add to shelf":"Save changes"}</button></div>`);
@@ -518,7 +699,7 @@ function openForm(b,capture){
     })();
   }
 
-  let force=false;
+  let force=false, copyOf=null, buyInto=null;
   $("#saveBtn",s).onclick=async()=>{
     const fd=Object.fromEntries(new FormData($("#bookForm",s)).entries());
     for(const k in fd)fd[k]=String(fd[k]).trim();
@@ -527,12 +708,18 @@ function openForm(b,capture){
     const rec={...(b||{}),...fd,status,rating,id:b?b.id:0};delete rec.hasPhoto;
     if(!force){
       const dupe=findDupe(rec,b?b.id:null);
-      if(dupe){$("#dupArea",s).innerHTML=`<div class="warn"><span>This looks like a book you already have: <strong>No. ${pad(dupe.id)} · ${esc(dupe.title)}</strong> (${esc([dupe.publisher,dupe.editionYear,dupe.cover].filter(Boolean).join(", "))}).</span><div class="actions"><button class="btn" id="dupOpen">Open it</button><button class="btn primary" id="dupSave">Save anyway</button></div></div>`;
-        $("#dupOpen",s).onclick=()=>{closeSheet();openBook(dupe.id)};$("#dupSave",s).onclick=()=>{force=true;$("#saveBtn",s).click()};return}
+      if(dupe&&dupe.status==="Wishlist"){$("#dupArea",s).innerHTML=`<div class="warn"><span>This book is on your wishlist: <strong>No. ${pad(dupe.id)} · ${esc(dupe.title)}</strong>. Bought it?</span><div class="actions"><button class="btn" id="dupSave">Save as a separate book</button><button class="btn primary" id="dupBuy">Move it to my shelves</button></div></div>`;
+        $("#dupSave",s).onclick=()=>{force=true;$("#saveBtn",s).click()};$("#dupBuy",s).onclick=()=>{force=true;buyInto=dupe;$("#saveBtn",s).click()};return}
+      if(dupe){$("#dupArea",s).innerHTML=`<div class="warn"><span>This looks like a book you already have: <strong>No. ${pad(dupe.id)} · ${esc(dupe.title)}</strong> (${esc([dupe.publisher,dupe.editionYear,dupe.cover].filter(Boolean).join(", "))}).</span><div class="actions"><button class="btn" id="dupOpen">Open it</button><button class="btn" id="dupSave">Save as a separate book</button><button class="btn primary" id="dupCopy">Add as another copy</button></div></div>`;
+        $("#dupOpen",s).onclick=()=>{closeSheet();openBook(dupe.id)};$("#dupSave",s).onclick=()=>{force=true;$("#saveBtn",s).click()};
+        $("#dupCopy",s).onclick=()=>{force=true;copyOf=dupe;$("#saveBtn",s).click()};return}
     }
     const btn=$("#saveBtn",s);btn.disabled=true;fs.textContent="Saving to your Google Sheet…";
     try{
+      if(copyOf)rec.workId=copyOf.workId||("W"+copyOf.id);
+      if(buyInto){rec.id=buyInto.id;rec.workId=buyInto.workId||rec.workId||"";if(rec.status==="Wishlist")rec.status="TBR"}
       const d=await api("save",{book:rec});let saved=upsertBook(d.book);
+      if(copyOf&&!copyOf.workId){try{await setWork([copyOf.id],rec.workId)}catch(e){toast("Saved, but linking the copies failed: "+e.message)}}
       if(coverIdx>=0&&photos[coverIdx]){
         fs.textContent="Saving the photo to your Drive…";
         try{const pd=await api("photo_set",{id:saved.id,image:await blobToB64(photos[coverIdx].blob)});saved=upsertBook(pd.book);setCachedPhoto(saved.id,photos[coverIdx].blob)}
@@ -540,11 +727,50 @@ function openForm(b,capture){
       }
       photos.forEach(p=>URL.revokeObjectURL(p.url));
       closeSheet();render();
-      if(isNew){toast(`Added as No. ${pad(saved.id)}`)}else{toast("Saved");if($(".book"))openBook(saved.id)}
+      if(buyInto){toast(`Moved to your shelves: No. ${pad(saved.id)}`)}else if(isNew){toast(`Added as No. ${pad(saved.id)}`)}else{toast("Saved");if($(".book"))openBook(saved.id)}
     }catch(e){btn.disabled=false;fs.textContent="";handleApiError(e,"Couldn’t save")}
   };
 }
 
+
+
+/* ---------- what to read next ---------- */
+let lastPicks=[], lastMood="";
+function recHtml(){
+  return lastPicks.filter(p=>books.find(b=>b.id===p.id)).map(p=>{const b=books.find(x=>x.id===p.id);
+    return `<div class="pick"><div class="shelf">${spineHtml(b)}</div><p class="small">${esc(p.reason)}</p></div>`}).join("");
+}
+async function runRecommend(v){
+  const btn=$("#recGo",v),out=$("#recOut",v);lastMood=$("#recMood",v).value.trim();
+  btn.disabled=true;out.innerHTML=`<p class="small muted">Claude is looking through your to-read pile… (about 10–20 seconds)</p>`;
+  try{const d=await api("recommend",{mood:lastMood});lastPicks=d.picks;if(d.budget){budget=d.budget;store.set("bc-budget",budget)}renderStats(v)}
+  catch(e){if(e.budget){budget=e.budget;store.set("bc-budget",budget)}btn.disabled=false;out.innerHTML=`<p class="small err">${esc(e.message)}</p>`}
+}
+
+/* ---------- missing volumes → wishlist ---------- */
+async function addMissingToWishlist(series,btn){
+  const g=window.BCStats.missingVolumes(books).find(x=>x.series===series);if(!g)return;
+  const todo=g.missing.filter(x=>!x.wish);btn.disabled=true;
+  try{for(const m of todo){btn.textContent=`Adding #${m.n}…`;const d=await api("save",{book:{title:`${series} #${m.n}`,author:g.author,series,seriesNo:m.n,status:"Wishlist"}});upsertBook(d.book)}
+    render();toast(`Added ${todo.length} volume${todo.length>1?"s":""} to your wishlist`)}
+  catch(e){btn.disabled=false;render();handleApiError(e,"Couldn’t add them all")}
+}
+
+/* ---------- photo session ---------- */
+function openPhotoSession(list){
+  list=[...list].sort((a,b)=>a.id-b.id);
+  let i=0,saved=0,failed=0,pending=0,queue=Promise.resolve();
+  const ses={
+    current:()=>list[i]||null,
+    left:()=>list.length-i,
+    status:()=>`${saved} saved${pending?` · ${pending} uploading`:""}${failed?` · ${failed} failed`:""}`,
+    skip:()=>{i++},
+    shot:blob=>{const b=list[i];i++;pending++;
+      queue=queue.then(async()=>{try{const d=await api("photo_set",{id:b.id,image:await blobToB64(blob)});upsertBook(d.book);setCachedPhoto(b.id,blob);saved++}catch(e){failed++}pending--;ses.repaint&&ses.repaint()})},
+    repaint:null
+  };
+  openCamera({session:ses},async()=>{await queue;render();toast(`Photo session done: ${saved} saved${failed?`, ${failed} failed`:""}`)});
+}
 
 /* ---------- stats dashboard ---------- */
 const sf={language:"",genre:"",cover:""};
@@ -555,6 +781,11 @@ function openStats(){
   document.body.append(v);syncScroll();renderStats(v);
   v.addEventListener("click",e=>{
     if(e.target.closest("#stBack")){closeStats();return}
+    if(e.target.closest("#stSugg")){openCopySuggestions();return}
+    if(e.target.closest("#phSession")){openPhotoSession((v._base||[]).filter(b=>!b.hasPhoto));return}
+    if(e.target.closest("#recGo")){runRecommend(v);return}
+    const ws=e.target.closest("[data-wishseries]");if(ws){addMissingToWishlist(ws.dataset.wishseries,ws);return}
+    if(e.target.closest("#recOut .spine")){const sp=e.target.closest(".spine");openBook(+sp.dataset.id);return}
     const col=e.target.closest(".col");
     if(col){const box=col.closest(".vcard");$$(".col",box).forEach(c=>c.setAttribute("aria-pressed",String(c===col)));
       const info=$(".colinfo",box);const d=v._drills[+col.dataset.d];
@@ -570,8 +801,10 @@ function openDrill(title,list){
   $(".drill",s).onclick=e=>{const sp=e.target.closest(".spine");if(sp){closeSheet();openBook(+sp.dataset.id)}};
 }
 function renderStats(v){
-  const base=books.filter(b=>(!sf.language||b.language===sf.language)&&(!sf.genre||b.genre===sf.genre)&&(!sf.cover||b.cover===sf.cover));
+  const wishN=books.filter(b=>!owned(b)).length;
+  const base=books.filter(b=>owned(b)&&(!sf.language||b.language===sf.language)&&(!sf.genre||b.genre===sf.genre)&&(!sf.cover||b.cover===sf.cover));
   const S=window.BCStats.compute(base);
+  S.missing=window.BCStats.missingVolumes(books); // includes wishlist, so planned buys show as such
   const drills=[];const reg=(title,list,label)=>{drills.push({title,list,label:label||title});return drills.length-1};
   const scope=[sf.language,sf.genre,sf.cover].filter(Boolean).join(" · ");
   const T=x=>scope?`${x} · ${scope}`:x;
@@ -590,6 +823,7 @@ function renderStats(v){
       return `<button class="col ${x.value?"":"zero"}" data-d="${id}" aria-pressed="false" aria-label="${esc(x.label)}: ${x.value}"><span class="b" data-h="${(100*x.value/max).toFixed(1)}"></span></button>`}).join("")}</div>
       <div class="collabels" aria-hidden="true">${items.map(x=>`<span>${esc(x.label)}</span>`).join("")}</div>
       <div class="colinfo"><span class="muted">${hint}</span></div>`};
+  const sugCount=window.BCStats.suggestCopies(base).length;
   const Y=window.BCStats.yearOf, firstShown=S.perYear.find(x=>x.key!=="earlier")?.key;
   const statusLbl=x=>statusLabel(x.key);
   const readCount=S.status[0].value, tbrCount=S.status[1].value;
@@ -605,7 +839,7 @@ function renderStats(v){
    <div class="tiles">
      <button class="tile" data-d="${idAll}"><span class="k">Books</span><span class="v">${S.total}</span><span class="s">${S.readPct}% read</span></button>
      <button class="tile" data-d="${idRead}"><span class="k">Read</span><span class="v">${readCount}</span><span class="s">${S.status[2].value} reading now</span></button>
-     <button class="tile" data-d="${idTbr}"><span class="k">To read</span><span class="v">${tbrCount}</span><span class="s">${S.upNext.length} high priority</span></button>
+     <button class="tile" data-d="${idTbr}"><span class="k">To read</span><span class="v">${tbrCount}</span><span class="s">${S.upNext.length} high priority${wishN?` · ${wishN} on wishlist`:""}</span></button>
      <button class="tile" data-d="${idRated}"><span class="k">Average rating</span><span class="v">${S.ratedCount?S.avgRating.toFixed(1)+" ★":"–"}</span><span class="s">from ${S.ratedCount} rated book${S.ratedCount===1?"":"s"}</span></button>
    </div>
    <section class="vcard"><h2>Reading status</h2>${segbar(S.status,"Status",b=>b.status,statusLbl)}</section>
@@ -616,6 +850,8 @@ function renderStats(v){
    <section class="vcard"><h2>My ratings</h2>${S.ratedCount?hbars(S.ratings,"Rated",(b,x)=>+b.rating===x.key,{cls:"stars",dlabel:x=>x.key+" stars"}):`<p class="vnote">No ratings yet.</p>`}</section>
    ${S.series.length?`<section class="vcard"><h2>Series progress</h2><p class="sub">Series with 3 or more of your books: read so far</p><div class="hbars">${S.series.map(x=>{const id=reg(T(x.key),base.filter(b=>b.series===x.key).sort((a,b)=>(parseFloat(a.seriesNo)||0)-(parseFloat(b.seriesNo)||0)));
        return `<button class="prow ${x.read===x.owned?"done":""}" data-d="${id}"><span class="top"><span>${esc(x.key)}</span><span>${x.read} of ${x.owned} read</span></span><span class="trk"><span class="fill" data-w="${(100*x.read/x.owned).toFixed(1)}"></span></span></button>`}).join("")}</div></section>`:""}
+   <section class="vcard"><h2>Most copies</h2>${S.copies.groups?`<p class="sub">${S.copies.groups} book${S.copies.groups===1?" has":"s have"} more than one copy · ${S.copies.extra} extra cop${S.copies.extra===1?"y":"ies"}</p>${(()=>{const max=Math.max(...S.copies.top.map(x=>x.value));return `<div class="hbars">${S.copies.top.map(x=>{const id=reg(`Copies: ${x.label}`,x.books);return `<button class="hrow" data-d="${id}"><span class="lab">${esc(x.label)}</span><span class="trk"><span class="fill" data-w="${(100*x.value/max).toFixed(1)}"></span></span><span class="num">${x.value}</span></button>`}).join("")}</div>`})()}`:`<p class="vnote">No copies linked yet.</p>`}
+     ${sugCount?`<button class="btn" id="stSugg">${sugCount} possible group${sugCount===1?"":"s"} of copies found: review</button>`:""}</section>
    <section class="vcard"><h2>Top authors</h2><p class="sub">By books you own</p>${hbars(S.authors,"Author",(b,x)=>b.author===x.key)}</section>
    <section class="vcard"><h2>The collection</h2><div class="twocol">
      <div class="mini"><h3>Language</h3>${segbar(S.languages.slice(0,4),"Language",b=>b.language,x=>String(x.key))}</div>
@@ -624,8 +860,19 @@ function renderStats(v){
    <section class="vcard"><h2>When they were first published</h2>${cols(S.decades,"First published",(b,x)=>window.BCStats.decadeKey(b.firstYear)===x.key,"Tap a bar to see its books.")}</section>
    <section class="vcard"><h2>Up next</h2><p class="sub">To read, marked high priority</p>
      ${S.upNext.length?`<div class="shelf upnext">${S.upNext.slice(0,5).map(spineHtml).join("")}</div>${S.upNext.length>5?`<button class="btn" data-d="${idUp}">Show all ${S.upNext.length}</button>`:""}`:`<p class="vnote">Nothing marked high priority.</p>`}</section>
+   <section class="vcard"><h2>What to read next</h2><p class="sub">Claude picks 3 books from your to-read pile, based on your ratings</p>
+     ${hasClaude?`<div class="inrow"><input id="recMood" class="field" type="text" maxlength="200" autocomplete="off" placeholder="Optional: in the mood for… (e.g. something light)" value="${esc(lastMood)}"><button class="btn primary" id="recGo" ${budgetLeft()?"":"disabled"}>Suggest</button></div>
+     <p class="budgetline">${esc(budgetText())}${budgetLeft()?" · about $0.01 per suggestion":""}</p><div id="recOut">${recHtml()}</div>`:`<p class="vnote">Needs your Anthropic key in the Google script.</p>`}</section>
+   <section class="vcard"><h2>Missing volumes</h2><p class="sub">Gaps in numbered series, up to the highest volume you own</p>
+     ${S.missing.length?`<div class="hbars">${S.missing.slice(0,10).map(g=>{const id=reg(T(g.series),g.books);
+       return `<div class="mrow"><button class="mlink" data-d="${id}"><span class="ms">${esc(g.series)}</span><span class="mm">Missing ${g.missing.map(x=>"#"+x.n+(x.wish?" (on wishlist)":"")).join(", ")}</span></button>${g.missing.some(x=>!x.wish)?`<button class="btn small-btn" data-wishseries="${esc(g.series)}">Add to wishlist</button>`:""}</div>`}).join("")}</div>`:`<p class="vnote">No gaps in your numbered series.</p>`}</section>
+   <section class="vcard"><h2>Where they are</h2>${S.locations.length?hbars(S.locations,"Location",(b,x)=>b.location===x.key):""}
+     ${S.noLocation?`<button class="btn" data-d="${reg(T("No location yet"),base.filter(b=>!b.location))}">${S.noLocation} book${S.noLocation===1?" has":"s have"} no location yet</button>`:""}</section>
+   <section class="vcard"><h2>Photos</h2><p class="sub">${S.withPhoto} of ${S.total} books have a photo of your copy</p>
+     <div class="prow done"><span class="trk"><span class="fill" data-w="${S.total?(100*S.withPhoto/S.total).toFixed(1):0}"></span></span></div>
+     ${S.total-S.withPhoto?`<button class="btn primary" id="phSession">${ICON.cam}Start a photo session (${S.total-S.withPhoto} to go)</button>`:""}</section>
    `}</div>`;
-  v._drills=drills;
+  v._drills=drills;v._base=base;
   $$("[data-w]",v).forEach(el=>el.style.width=el.dataset.w+"%");
   $$("[data-h]",v).forEach(el=>el.style.height=el.dataset.h+"%");
   $$("[data-grow]",v).forEach(el=>el.style.flexGrow=el.dataset.grow);

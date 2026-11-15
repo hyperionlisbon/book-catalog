@@ -21,6 +21,48 @@
     return head.concat({ key: '__other', label: `Other (${rest.length})`, value: rest.reduce((s, x) => s + x.value, 0), keys: rest.map(x => x.key) });
   }
 
+  const normT = s => String(s === null || s === undefined ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // "Orgulho e Preconceito (Pride and Prejudice)" -> "Pride and Prejudice": the original title names the work.
+  const workTitle = t => { t = String(t || ''); const m = t.match(/\(([^)]+)\)\s*$/); return (m ? m[1] : t).trim(); };
+  const workKey = b => normT(workTitle(b.title)) + '|' + normT(b.author) + '|' + String(b.seriesNo === null || b.seriesNo === undefined ? '' : b.seriesNo).trim();
+
+  // Copy groups the person already linked (same "workId"), largest first.
+  function copyGroups(books) {
+    const m = new Map();
+    books.forEach(b => { if (!b.workId) return; const g = m.get(b.workId) || []; g.push(b); m.set(b.workId, g); });
+    return [...m.entries()].filter(([, g]) => g.length > 1).map(([key, g]) => {
+      g.sort((a, b) => a.id - b.id);
+      return { key, label: workTitle(g[0].title), value: g.length, books: g };
+    }).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  }
+
+  // Books that look like copies of the same book (same original title, author and volume) but aren't linked yet.
+  function suggestCopies(books) {
+    const m = new Map();
+    books.forEach(b => { if (!b.title) return; const k = workKey(b); const g = m.get(k) || []; g.push(b); m.set(k, g); });
+    return [...m.values()].filter(g => g.length > 1 && !(g[0].workId && g.every(b => b.workId === g[0].workId)))
+      .map(g => g.sort((a, b) => a.id - b.id)).sort((a, b) => b.length - a.length || a[0].id - b[0].id);
+  }
+
+  // Gaps in numbered series you own (e.g. you have #1, #2, #4 → #3 is missing). Only up to your highest volume.
+  function missingVolumes(books) {
+    const m = new Map();
+    books.forEach(b => {
+      if (!b.series) return;
+      // "1, 2, 3" (an omnibus) counts as owning each of those volumes
+      const nums = String(b.seriesNo === null || b.seriesNo === undefined ? '' : b.seriesNo).split(/[,;&]/).map(x => parseInt(x, 10)).filter(n => n > 0 && n < 1000);
+      if (!nums.length) return;
+      const k = normT(b.series); const g = m.get(k) || { series: b.series, author: b.author, owned: new Set(), wish: new Set(), books: [] };
+      nums.forEach(n => (b.status === 'Wishlist' ? g.wish : g.owned).add(n)); g.books.push(b); m.set(k, g);
+    });
+    return [...m.values()].map(g => {
+      const max = Math.max(0, ...g.owned);
+      const missing = [];
+      for (let i = 1; i < max; i++) if (!g.owned.has(i)) missing.push({ n: i, wish: g.wish.has(i) });
+      return { series: g.series, author: g.author, have: g.owned.size, max, missing, books: g.books.sort((a, b) => (parseInt(a.seriesNo, 10) || 0) - (parseInt(b.seriesNo, 10) || 0)) };
+    }).filter(g => g.missing.length).sort((a, b) => b.missing.length - a.missing.length || a.series.localeCompare(b.series));
+  }
+
   function compute(books, opts = {}) {
     const nowYear = opts.nowYear || new Date().getFullYear();
     const total = books.length;
@@ -62,9 +104,14 @@
       covers: tally(books, b => b.cover),
       series, decades,
       upNext: books.filter(b => b.status === 'TBR' && b.priority === 'High').sort((a, b) => a.id - b.id),
-      awards: books.filter(b => b.awards).length
+      awards: books.filter(b => b.awards).length,
+      locations: tally(books, b => b.location).slice(0, 8),
+      noLocation: books.filter(b => !b.location).length,
+      withPhoto: books.filter(b => b.hasPhoto).length,
+      missing: missingVolumes(books),
+      copies: (() => { const g = copyGroups(books); return { top: g.slice(0, 5), groups: g.length, extra: g.reduce((s, x) => s + x.value - 1, 0) }; })()
     };
   }
 
-  root.BCStats = { compute, yearOf, decadeKey, STATUS_ORDER };
+  root.BCStats = { compute, yearOf, decadeKey, STATUS_ORDER, workTitle, workKey, copyGroups, suggestCopies, missingVolumes, normT };
 })(typeof window !== 'undefined' ? window : globalThis);
