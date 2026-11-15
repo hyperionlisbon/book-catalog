@@ -8,8 +8,8 @@ const GENRES=["Biography","Dystopia","Fantasy","Fiction","Graphic Novel","Histor
 const SUBGENRES=["AGI","AI","Asian","BL","Children","Classic","Cyberpunk","Dark Academia","Dark Fantasy","Dragons","Faeries","Fantasy Adventure","Gods","Gothic","High Fantasy","Isekai","LitRPG","Medieval","Memoir","Mystery","Nature Powers","Other Civilizations","Other Worlds","Post-Apocalyptic","Romantsy","Shōjo","Shōnen","Soft-horror","Space","Special School","Trials","VRMMORPG","Vampires","Vitorian England","War","Witches","Witty","Wizzards","Xianxia","YA","Zombies"];
 const STATUSES=["Reading","TBR","Read","DNF"];
 const LANGS={en:"English",pt:"Portuguese",es:"Spanish",fr:"French",de:"German",it:"Italian",ja:"Japanese",ko:"Korean",zh:"Chinese",nl:"Dutch"};
-const ADD_STEPS=[["Front cover","This one becomes the book’s photo"],["Back cover","Keep the barcode visible"],["Copyright page","Inside page with publisher and year"],["Anything else","Optional: spine or flap"]];
-const COVER_STEPS=[["Front cover","Fill the frame with the cover"]];
+const ADD_STEPS=[["Front cover","Fit the cover inside the frame"],["Back cover","Barcode inside the frame"],["Copyright page","Page with publisher and year, inside the frame"],["Anything else","Optional: spine or flap"]];
+const COVER_STEPS=[["Front cover","Fit the cover inside the frame"]];
 const MAX_PHOTOS=4;
 const SCRIPT_URL_RE=/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{20,}\/exec$/;
 const TOKEN_RE=/^[A-Za-z0-9_-]{32,128}$/;
@@ -280,13 +280,27 @@ function openAddChoice(){
 }
 
 /* ---------- camera ---------- */
-async function shrink(source,w,h){
-  const max=1568, sc=Math.min(1,max/Math.max(w,h));
-  const c=document.createElement("canvas");c.width=Math.round(w*sc);c.height=Math.round(h*sc);
-  c.getContext("2d").drawImage(source,0,0,c.width,c.height);
+// crop (optional): the part of the source to keep, {sx,sy,sw,sh} in source pixels
+async function shrink(source,w,h,crop){
+  const r=crop||{sx:0,sy:0,sw:w,sh:h};
+  const max=1568, sc=Math.min(1,max/Math.max(r.sw,r.sh));
+  const c=document.createElement("canvas");c.width=Math.round(r.sw*sc);c.height=Math.round(r.sh*sc);
+  c.getContext("2d").drawImage(source,r.sx,r.sy,r.sw,r.sh,0,0,c.width,c.height);
   let q=.85, blob;
   for(let i=0;i<3;i++){blob=await new Promise(r=>c.toBlob(r,"image/jpeg",q));if(blob&&blob.size<1000000)break;q-=.15}
   return {blob,canvas:c};
+}
+// The camera preview fills the screen ("cover"), so the saved photo must be cut to match:
+// keep exactly what is inside the white guide frame on screen.
+function frameCrop(video,frameEl){
+  const vw=video.videoWidth,vh=video.videoHeight;
+  const vr=video.getBoundingClientRect(),fr=frameEl.getBoundingClientRect();
+  if(!vw||!vh||!vr.width||!fr.width)return null;
+  const scale=Math.max(vr.width/vw,vr.height/vh);
+  const offX=(vw*scale-vr.width)/2,offY=(vh*scale-vr.height)/2;
+  let sx=(fr.left-vr.left+offX)/scale,sy=(fr.top-vr.top+offY)/scale,sw=fr.width/scale,sh=fr.height/scale;
+  sx=Math.max(0,sx);sy=Math.max(0,sy);sw=Math.min(sw,vw-sx);sh=Math.min(sh,vh-sy);
+  return sw>20&&sh>20?{sx,sy,sw,sh}:null;
 }
 function blobToB64(blob){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(",")[1]);fr.onerror=rej;fr.readAsDataURL(blob)})}
 let detector=null;
@@ -350,7 +364,7 @@ function openCamera(opts,onDone){
     if(!stream||!video.videoWidth||photos.length>=max)return;
     shutter.disabled=true;
     const fl=$("#camFlash",root);fl.classList.remove("on");void fl.offsetWidth;fl.classList.add("on");
-    try{const {blob,canvas}=await shrink(video,video.videoWidth,video.videoHeight);if(!isbn&&max>1){const v=await findIsbn(canvas);if(v){isbn=v;showIsbn()}}addBlob(blob)}
+    try{if(!isbn&&max>1){const v=await findIsbn(video);if(v){isbn=v;showIsbn()}}const {blob}=await shrink(video,video.videoWidth,video.videoHeight,frameCrop(video,$("#camFrame",root)));addBlob(blob)}
     catch(e){toast("Couldn’t take the photo. Try again.")}
     paintStep();
   };
