@@ -38,7 +38,7 @@ const ICON={
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
 let toastT;
-function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,3000)}
+function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
 /* ---------- state ---------- */
 let conn=store.get("bc-conn",null);
@@ -69,7 +69,7 @@ async function api(action,payload={},c=conn){
   let data;
   try{data=await res.json()}catch(e){throw Object.assign(new Error("Unexpected reply from your Google script. Check that it is deployed as a web app."),{code:"bad_reply"})}
   if(!data.ok){
-    const msg=data.message||({unauthorized:"Access key not accepted. Reconnect in Settings.",locked:"Too many wrong keys. Wait 15 minutes."}[data.error])||data.error||"Something went wrong.";
+    const msg=data.message||({unauthorized:"Access key not accepted. Reconnect in Settings.",locked:"Too many wrong keys. Wait 15 minutes.",unknown_action:"Your Google script is an older version. In Apps Script: Deploy › Manage deployments › ✏️ › Version: New version › Deploy."}[data.error])||data.error||"Something went wrong.";
     throw Object.assign(new Error(msg),{code:data.error,budget:data.budget});
   }
   return data;
@@ -242,7 +242,7 @@ function openBook(id){
   $("#bkEdit",v).onclick=()=>openForm(b);
   $("#bkPhoto",v).onclick=()=>openCamera({steps:COVER_STEPS,max:1},async r=>{
     if(!r.photos.length)return;
-    const btn=$("#bkPhoto",v);btn.disabled=true;$("#heroInner",v).textContent="Saving photo…";
+    const btn=$("#bkPhoto",v);btn.disabled=true;btn.innerHTML=`${ICON.cam}<span>Saving photo…</span>`;
     try{
       const img=await blobToB64(r.photos[0].blob);
       const d=await api("photo_set",{id:b.id,image:img});
