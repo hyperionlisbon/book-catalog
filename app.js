@@ -330,15 +330,19 @@ function openCheck(){
   const out=$("#ckOut",s), q=$("#ckQ",s);
   const go=()=>runCheck(q.value,out);
   $("#ckGo",s).onclick=go;q.onkeydown=e=>{if(e.key==="Enter")go()};
-  $("#ckScan",s).onclick=()=>openCamera({steps:[["Barcode","Point the camera at the barcode"]],max:1,autoIsbn:true},async r=>{
+  $("#ckScan",s).onclick=()=>openCamera({steps:[["Barcode","Fit it in the frame: it scans by itself"]],max:1,autoIsbn:true},async r=>{
     openCheck();const o=$("#ckOut");
+    const fail=why=>{o.innerHTML=`<section class="card verdict no"><div class="vd">Couldn’t read the barcode</div><p class="small">${why}</p><div class="actions"><button class="btn" id="ckAgain">${ICON.scan}Try again</button></div></section>`;
+      $("#ckAgain",o).onclick=()=>$("#ckScan").click();$("#ckQ").focus()};
     if(r.isbn){$("#ckQ").value=r.isbn;runCheck(r.isbn,o);return}
     if(!r.photos.length)return;
-    if(!hasClaude||!budgetLeft()){o.innerHTML=`<p class="small muted">The barcode couldn’t be read from the photo. Type the ISBN instead.</p>`;return}
-    o.innerHTML=`<p class="small muted">Reading the photo…</p>`;
+    if(!hasClaude||!budgetLeft()){fail("Hold the phone closer so the barcode fills the frame, in good light. Or type the ISBN (the number under the barcode) above.");return}
+    o.innerHTML=`<p class="small muted">Reading the barcode from your photo… (about 10 seconds)</p>`;
     try{const d=await api("read",{images:[await blobToB64(r.photos[0].blob)]});const x=d.result||{};if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
-      const isbn=isbnDigits(x.isbn)[0];const qq=isbn||[x.title,x.author].filter(Boolean).join(" ");$("#ckQ").value=qq;runCheck(qq,o)}
-    catch(e){o.innerHTML=`<p class="small err">${esc(e.message)}</p>`}
+      const isbn=isbnDigits(x.isbn)[0];const qq=isbn||[x.title,x.author].filter(Boolean).join(" ");
+      if(!qq){fail("The photo didn’t show a readable barcode or title. Hold the phone closer, in good light, or type the ISBN above.");return}
+      $("#ckQ").value=qq;runCheck(qq,o)}
+    catch(e){fail(esc(e.message)+" You can type the ISBN above instead.")}
   });
 }
 async function runCheck(raw,out){
@@ -490,11 +494,11 @@ async function findIsbn(src){
 function openCamera(opts,onDone){
   const steps=opts.steps||[["",""]], max=opts.max||1, ses=opts.session||null;
   const scanIsbn=max>1||!!opts.autoIsbn;
-  const photos=[];let isbn="";let stream=null;let scanTimer=null;let closed=false;
+  const photos=[];let isbn="";let stream=null;let scanTimer=null;let closed=false;let busyScan=false;
   const root=document.createElement("div");root.className="cam";root.setAttribute("role","dialog");root.setAttribute("aria-label","Camera");
   root.innerHTML=`
-   <div class="cam-top"><button class="x" id="camClose" aria-label="Close camera">×</button><div class="cam-step" id="camStep"></div><span class="x" aria-hidden="true"></span></div>
-   <div class="cam-view"><video id="camVideo" playsinline muted autoplay></video><div class="cam-frame" id="camFrame" hidden></div><div class="cam-chip" id="camChip" hidden></div><div class="flash" id="camFlash"></div><div class="cam-msg" id="camMsg"></div></div>
+   <div class="cam-top"><button class="x" id="camClose" aria-label="Close camera">×</button><div class="cam-step" id="camStep"></div><button class="x camswitch" id="camSwitch" aria-label="Switch camera" tabindex="-1"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9.5 12.5a2.5 2.5 0 0 1 4.6-1.4M14.5 13.5a2.5 2.5 0 0 1-4.6 1.4"/><path d="M14 10v1.5h-1.5M10 16v-1.5h1.5"/></svg></button></div>
+   <div class="cam-view"><video id="camVideo" playsinline muted autoplay></video><div class="cam-frame ${opts.autoIsbn?"barcode":""}" id="camFrame" hidden></div><div class="cam-chip" id="camChip" hidden></div><div class="flash" id="camFlash"></div><div class="focusring" id="camRing" hidden></div><div class="cam-msg" id="camMsg"></div></div>
    <div class="cam-bottom"><div class="cam-thumbs" id="camThumbs"></div><button class="shutter" id="shutter" aria-label="Take photo" disabled></button><button class="cam-done" id="camDone" disabled>Done</button></div>`;
   document.body.append(root);syncScroll();
   const video=$("#camVideo",root), msg=$("#camMsg",root), shutter=$("#shutter",root), done=$("#camDone",root), stepEl=$("#camStep",root);
@@ -506,7 +510,7 @@ function openCamera(opts,onDone){
     const i=Math.min(photos.length,steps.length-1);
     stepEl.innerHTML=photos.length>=max?`All set<small>Tap Done</small>`:`${steps.length>1?(photos.length+1)+". ":""}${esc(steps[i][0])}<small>${esc(steps[i][1])}</small>`;
     $("#camThumbs",root).innerHTML=photos.map((p,i)=>`<img src="${p.url}" alt="Photo ${i+1}">`).join("");
-    done.disabled=!photos.length;shutter.disabled=!stream||photos.length>=max};
+    done.disabled=!photos.length;done.hidden=!!opts.autoIsbn;shutter.disabled=!stream||photos.length>=max};
   const showIsbn=()=>{const chip=$("#camChip",root);chip.textContent=`Barcode read: ${isbn}`;chip.hidden=!isbn};
   const stop=()=>{clearInterval(scanTimer);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null};
   const close=()=>{if(closed)return;closed=true;stop();root.remove();syncScroll()};
@@ -514,19 +518,76 @@ function openCamera(opts,onDone){
   done.onclick=()=>{close();onDone({photos,isbn})};
   if(ses)ses.repaint=()=>{if(!closed)paintStep()};
   const addBlob=blob=>{photos.push({blob,url:URL.createObjectURL(blob)});paintStep()};
+  // what is inside the white frame, as a small canvas (barcodes read better zoomed in)
+  const frameCanvas=()=>{const r=frameCrop(video,$("#camFrame",root));if(!r)return video;const c=document.createElement("canvas");const sc=Math.min(1,1280/r.sw);
+    c.width=Math.round(r.sw*sc);c.height=Math.round(r.sh*sc);c.getContext("2d").drawImage(video,r.sx,r.sy,r.sw,r.sh,0,0,c.width,c.height);return c};
   const fallbackHtml=`<label class="btn">Use the phone’s camera app instead<input type="file" accept="image/*" capture="environment" id="camFile" hidden></label>`;
   const wireFallback=()=>{const f=$("#camFile",root);if(!f)return;f.onchange=async()=>{const file=f.files[0];f.value="";if(!file||photos.length>=max)return;
     try{const bmp=await createImageBitmap(file);const {blob,canvas}=await shrink(bmp,bmp.width,bmp.height);if(!isbn&&scanIsbn){isbn=await findIsbn(canvas);showIsbn();if(isbn&&opts.autoIsbn){done.onclick();return}}addBlob(blob)}catch(e){toast("That photo couldn’t be used.")}}};
 
+
+  // ----- choosing the lens and keeping it focused -----
+  // Phones with several back cameras often give web pages the ultra-wide lens, which can't focus up close.
+  // Prefer the main back camera, remember the choice, and let the person switch.
+  const SIZE={width:{ideal:1920},height:{ideal:1080}};
+  let backCams=[];
+  const track=()=>stream&&stream.getVideoTracks()[0];
+  async function listBack(){
+    try{const all=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+      const back=all.filter(d=>/back|rear|environment|traseira|trás/i.test(d.label));return back.length?back:all}catch(e){return []}
+  }
+  async function getStream(id){return navigator.mediaDevices.getUserMedia({audio:false,video:id?{deviceId:{exact:id},...SIZE}:{facingMode:{ideal:"environment"},...SIZE}})}
+  async function keepFocus(){
+    const t=track();if(!t||!t.getCapabilities)return;
+    try{const c=t.getCapabilities();if(c.focusMode&&c.focusMode.includes("continuous"))await t.applyConstraints({advanced:[{focusMode:"continuous"}]})}catch(e){}
+  }
+  async function openStream(){
+    const saved=store.get("bc-cam-id",null);
+    let s0;
+    try{s0=await getStream(saved)}catch(e){if(!saved)throw e;store.del("bc-cam-id");s0=await getStream(null)}
+    stream=s0;
+    backCams=await listBack();
+    if(!saved&&backCams.length>1){
+      // Android names lenses "camera2 0, facing back", "camera2 2, facing back"…: number 0 is the main one
+      const main=backCams.find(d=>/\b0\b/.test(d.label))||backCams[0];
+      const cur=track()&&track().getSettings?track().getSettings().deviceId:"";
+      if(main&&main.deviceId&&main.deviceId!==cur){s0.getTracks().forEach(t=>t.stop());try{s0=await getStream(main.deviceId)}catch(e){s0=await getStream(null)}stream=s0}
+    }
+    const sw=$("#camSwitch",root);sw.classList.toggle("show",backCams.length>1);sw.tabIndex=backCams.length>1?0:-1;
+    await keepFocus();
+    return s0;
+  }
+  $("#camSwitch",root).onclick=async()=>{
+    if(backCams.length<2||!stream)return;
+    const cur=track().getSettings?track().getSettings().deviceId:"";
+    const i=backCams.findIndex(d=>d.deviceId===cur);const next=backCams[(i+1)%backCams.length];
+    stream.getTracks().forEach(t=>t.stop());
+    try{stream=await getStream(next.deviceId);store.set("bc-cam-id",next.deviceId);video.srcObject=stream;await video.play().catch(()=>{});await keepFocus();
+      toast(`Camera ${((i+1)%backCams.length)+1} of ${backCams.length}`)}
+    catch(e){toast("That camera couldn’t start");stream=await getStream(null);video.srcObject=stream;await video.play().catch(()=>{})}
+  };
+  // tap the picture to focus there (where the phone supports it)
+  video.addEventListener("click",async e=>{
+    const t=track();if(!t)return;const r=video.getBoundingClientRect();
+    const ring=$("#camRing",root);ring.hidden=false;ring.style.left=(e.clientX-r.left)+"px";ring.style.top=(e.clientY-r.top)+"px";
+    ring.classList.remove("on");void ring.offsetWidth;ring.classList.add("on");setTimeout(()=>ring.hidden=true,900);
+    try{const c=t.getCapabilities?t.getCapabilities():{};
+      if(c.focusMode&&c.focusMode.includes("single-shot")){
+        const x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
+        await t.applyConstraints({advanced:[{pointsOfInterest:[{x,y}],focusMode:"single-shot"}]});setTimeout(keepFocus,1500)}
+      else await keepFocus();
+    }catch(err){}
+  });
+
   async function start(){
     msg.innerHTML=`<div class="stack"><p>Starting the camera…</p></div>`;
     try{
-      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});
+      stream=await openStream();
       if(closed){stop();return}
       store.set("bc-cam-ok",true); // allowed once: next time open straight away
       video.srcObject=stream;await video.play().catch(()=>{});
       msg.innerHTML="";msg.hidden=true;$("#camFrame",root).hidden=false;paintStep();
-      if(scanIsbn&&await getDetector()){scanTimer=setInterval(async()=>{if(isbn||!video.videoWidth)return;const v=await findIsbn(video);if(v){isbn=v;showIsbn();if(navigator.vibrate)navigator.vibrate(60);if(opts.autoIsbn)setTimeout(()=>done.onclick(),400)}},450)}
+      if(scanIsbn&&await getDetector()){let tick=0;scanTimer=setInterval(async()=>{if(isbn||!video.videoWidth||busyScan)return;busyScan=true;tick++;const v=await findIsbn(tick%2?frameCanvas():video);busyScan=false;if(v){isbn=v;showIsbn();if(navigator.vibrate)navigator.vibrate(60);if(opts.autoIsbn)setTimeout(()=>done.onclick(),400)}},450)}
     }catch(e){
       stream=null;paintStep();msg.hidden=false;
       if(e&&(e.name==="NotAllowedError"||e.name==="SecurityError")){
@@ -544,7 +605,7 @@ function openCamera(opts,onDone){
     if(!stream||!video.videoWidth||photos.length>=max)return;
     shutter.disabled=true;
     const fl=$("#camFlash",root);fl.classList.remove("on");void fl.offsetWidth;fl.classList.add("on");
-    try{if(!isbn&&scanIsbn&&!ses){const v=await findIsbn(video);if(v){isbn=v;showIsbn()}}const {blob}=await shrink(video,video.videoWidth,video.videoHeight,frameCrop(video,$("#camFrame",root)));if(ses){ses.shot(blob);shutter.disabled=false;paintStep();return}addBlob(blob)}
+    try{if(!isbn&&scanIsbn&&!ses){const v=await findIsbn(video);if(v){isbn=v;showIsbn()}}const {blob,canvas}=await shrink(video,video.videoWidth,video.videoHeight,frameCrop(video,$("#camFrame",root)));if(ses){ses.shot(blob);shutter.disabled=false;paintStep();return}if(!isbn&&scanIsbn){const v=await findIsbn(canvas);if(v){isbn=v;showIsbn()}}addBlob(blob);if(opts.autoIsbn){done.onclick();return}}
     catch(e){toast("Couldn’t take the photo. Try again.")}
     paintStep();
   };
