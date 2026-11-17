@@ -146,6 +146,7 @@ function renderChrome(){
   $("#addBtn").hidden=!conn;
   $("#checkBtn").hidden=!conn;
   $("#statsBtn").hidden=!conn||!books.length;
+  $("#twinBtn").hidden=!conn||!books.length;
 }
 let workCount=new Map();
 function refreshWorkCount(){workCount=new Map();books.forEach(b=>{if(b.workId)workCount.set(b.workId,(workCount.get(b.workId)||0)+1)})}
@@ -196,6 +197,7 @@ $("#addBtn").addEventListener("click",openAddChoice);
 $("#settingsBtn").addEventListener("click",openSettings);
 $("#checkBtn").addEventListener("click",openCheck);
 $("#statsBtn").addEventListener("click",()=>openStats());
+$("#twinBtn").addEventListener("click",()=>openTwin());
 
 async function loadBooks(){
   try{const d=await api("list");books=d.books.map(b=>({...b,id:+b.id}));store.set("bc-books",books);render()}
@@ -214,14 +216,14 @@ const budgetLeft=()=>hasClaude&&budget&&budget.spentUsd+0.03<=budget.budgetUsd&&
 /* ---------- sheets (settings, add, form) ---------- */
 const layer=$("#layer");
 function closeSheet(){layer.innerHTML="";syncScroll()}
-function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv"))?"hidden":""}
+function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv")||$(".twinv"))?"hidden":""}
 function sheet(html){
   layer.innerHTML=`<div class="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   syncScroll();
   const scrim=layer.firstElementChild;scrim.addEventListener("click",e=>{if(e.target===scrim)closeSheet()});
   const s=scrim.firstElementChild;$$("[data-close]",s).forEach(x=>x.onclick=closeSheet);return s;
 }
-document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats()});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".twinv"))closeTwin()});
 
 function openSettings(){
   const s=sheet(`
@@ -241,14 +243,14 @@ function openSettings(){
     let c;try{c=parseCode($("#codeIn",s).value)}catch(e){msg.className="small err";msg.textContent=e.message;return}
     msg.textContent="Checking…";
     try{const d=await api("status",{},c);conn=c;store.set("bc-conn",conn);budget=d.budget;hasClaude=!!d.claude;store.set("bc-budget",budget);store.set("bc-claude",hasClaude);
-      closeSheet();toast("Connected");books=[];render();loadBooks();}
+      closeSheet();toast("Connected");books=[];render();loadBooks();loadTwin();}
     catch(e){msg.className="small err";msg.textContent=e.message}
   };
   if(conn){
     $("#forgetBtn",s).onclick=()=>{
       $("#setActs",s).innerHTML=`<div class="confirm"><span>Remove the connection and the saved book list from this phone? Your Google Sheet is not touched.</span><button class="btn" id="fNo">Keep</button><button class="btn dangerfill" id="fYes">Disconnect</button></div>`;
       $("#fNo",s).onclick=()=>{closeSheet();openSettings()};
-      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude"].forEach(store.del);conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
+      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude","bc-twin"].forEach(store.del);twin=null;conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
     };
     $("#reloadBtn",s).onclick=()=>{closeSheet();loadBooks();loadStatus()};
   }
@@ -298,9 +300,10 @@ function openBook(id){
         ${fact("Edition",[b.publisher,b.editionYear].filter(Boolean).join(", "),[b.cover,b.special].filter(Boolean).join(" · "))}
         ${fact("First published",b.firstYear?String(b.firstYear):"",b.firstPublisher)}
         ${fact("Language",b.language,b.isbn?"ISBN "+b.isbn:"")}
-        ${fact("Where it is",b.location,"")}
+        ${isPlaced(b)?"":fact("Where it is",b.location,"")}
       </div>
       ${b.awards?`<div class="award">${ICON.award}<span>${esc(b.awards)}</span></div>`:""}
+      ${whereHtml(b)}
       ${copiesHtml(b)}
       <div id="delArea"></div>
       <div class="actions"><button class="btn danger" id="bkDel">Delete</button><button class="btn primary" id="bkEdit">Edit book</button></div>
@@ -308,6 +311,7 @@ function openBook(id){
   document.body.append(v);syncScroll();
   $("#bkBack",v).onclick=closeBook;
   $("#bkEdit",v).onclick=()=>openForm(b);
+  wireWhere(v,b);
   const rb=$(".readbar",v);if(rb)rb.onclick=e=>{const x=e.target.closest("[data-act]");if(x)readAction(b,x.dataset.act,x)};
   const cp=$(".copies",v);
   if(cp)cp.onclick=e=>{
@@ -549,12 +553,12 @@ async function findIsbn(src){
 
 function openCamera(opts,onDone){
   const steps=opts.steps||[["",""]], max=opts.max||1, ses=opts.session||null;
-  const scanIsbn=max>1||!!opts.autoIsbn;
+  const scanIsbn=(max>1||!!opts.autoIsbn)&&!opts.noIsbn;
   const photos=[];let isbn="";let stream=null;let scanTimer=null;let closed=false;let busyScan=false;
   const root=document.createElement("div");root.className="cam";root.setAttribute("role","dialog");root.setAttribute("aria-label","Camera");
   root.innerHTML=`
    <div class="cam-top"><button class="x" id="camClose" aria-label="Close camera">×</button><div class="cam-step" id="camStep"></div><button class="x camswitch" id="camSwitch" aria-label="Switch camera" tabindex="-1"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9.5 12.5a2.5 2.5 0 0 1 4.6-1.4M14.5 13.5a2.5 2.5 0 0 1-4.6 1.4"/><path d="M14 10v1.5h-1.5M10 16v-1.5h1.5"/></svg></button></div>
-   <div class="cam-view"><video id="camVideo" playsinline muted autoplay></video><div class="cam-frame ${opts.autoIsbn?"barcode":""}" id="camFrame" hidden></div><div class="cam-chip" id="camChip" hidden></div><div class="flash" id="camFlash"></div><div class="focusring" id="camRing" hidden></div><div class="cam-msg" id="camMsg"></div></div>
+   <div class="cam-view"><video id="camVideo" playsinline muted autoplay></video><div class="cam-frame ${opts.autoIsbn?"barcode":opts.frame==="full"?"full":""}" id="camFrame" hidden></div><div class="cam-chip" id="camChip" hidden></div><div class="flash" id="camFlash"></div><div class="focusring" id="camRing" hidden></div><div class="cam-msg" id="camMsg"></div></div>
    <div class="cam-bottom"><div class="cam-thumbs" id="camThumbs"></div><button class="shutter" id="shutter" aria-label="Take photo" disabled></button><button class="cam-done" id="camDone" disabled>Done</button></div>`;
   document.body.append(root);syncScroll();
   const video=$("#camVideo",root), msg=$("#camMsg",root), shutter=$("#shutter",root), done=$("#camDone",root), stepEl=$("#camStep",root);
@@ -1106,7 +1110,336 @@ function renderStats(v){
   $$(".upnext",v).forEach(sh=>sh.onclick=e=>{const sp=e.target.closest(".spine");if(sp){e.stopPropagation();openBook(+sp.dataset.id)}});
 }
 
+/* ---------- shelf twin: bookcases, shelves, where each book is ---------- */
+let twin=store.get("bc-twin",null); // {cases:[{id,room,name,shelves:[{n,free,photo}]}]}
+let twinOld=false; // the Google script doesn't know the shelf twin yet
+const tw={room:store.get("bc-tw-room",""),caseId:store.get("bc-tw-case","")};
+const ICON_CASE=`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 3h16v18H4zM4 9h16M4 15h16M8 5v3M11 5v3M8 11v3M14 11v3M8 17v3M11 17v3M16 17v3"/></svg>`;
+async function loadTwin(){
+  try{const d=await api("twin_get");twin={cases:d.cases||[]};twinOld=false;store.set("bc-twin",twin);refreshTwin()}
+  catch(e){if(e.code==="unknown_action"){twinOld=true;twin=null;store.del("bc-twin");refreshTwin()}}
+}
+const twCases=()=>(twin&&twin.cases)||[];
+const caseById=id=>twCases().find(c=>c.id===id);
+const shelfParts=k=>{const m=String(k||"").match(/^(C\d+):(\d+)$/);return m?{c:caseById(m[1]),n:+m[2]}:null};
+const shelfInfo=k=>{const p=shelfParts(k);return p&&p.c?p.c.shelves.find(s=>s.n===p.n)||null:null};
+const shelfOk=k=>!!shelfInfo(k);
+const shelfName=(k,short)=>{const p=shelfParts(k);if(!p||!p.c)return "";return short?`${p.c.name} · Shelf ${p.n}`:`${p.c.room} · ${p.c.name} · Shelf ${p.n}`};
+const onShelf=k=>books.filter(b=>b.shelf===k&&owned(b)).sort((a,b)=>(+a.shelfPos||0)-(+b.shelfPos||0)||a.id-b.id);
+const isPlaced=b=>shelfOk(b.shelf);
+const unplacedBooks=()=>books.filter(b=>owned(b)&&!isPlaced(b));
+const colorCls=b=>spineOf(b).cls.split(" ")[0]+(spineOf(b).light?" light":"");
+const unitsOf=b=>b.cover==="Hardcover"?1.35:b.cover==="Paperback"?1:1.15;
+const ordinal=n=>n+((n%100>=11&&n%100<=13)?"th":({1:"st",2:"nd",3:"rd"}[n%10]||"th"));
+const fmtDay=s=>{const m=String(s||"").match(/^(\d{4})-(\d\d)-(\d\d)$/);return m?new Date(+m[1],+m[2]-1,+m[3]).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):""};
+function freeCount(k,list){
+  const f=(shelfInfo(k)||{}).free;if(f==null)return null;if(!list.length)return null;
+  const used=list.reduce((s,b)=>s+unitsOf(b),0);return Math.max(0,Math.round(used*f/(1-Math.min(f,.95))/(used/list.length)));
+}
+// Spines are drawn from data-u (width in "book units") and data-h (height): the page's security rules forbid inline styles in HTML.
+function spineBits(list,{hl,big,maxH}){
+  return list.map((b,i)=>{const mk=marksOf(b);const h0=hash(b.title+"|"+b.author);
+    const h=Math.round(maxH*(b.cover==="Paperback"?.8:.93)-(h0%9)*maxH/100);
+    return `<span class="tsp ${colorCls(b)}${hl===b.id?" hl":""}" data-u="${unitsOf(b)}" data-h="${h}">${big?`<i>${esc(b.title)}</i><em>${i+1}</em>`:""}${mk.special?`<b class="tfoil"></b>`:""}${mk.signed?`<b class="tsig"></b>`:""}</span>`}).join("");
+}
+// Fit the books of every shelf in a bookcase to the width available (all shelves share one scale, like a real bookcase).
+function layoutSpines(root,{maxPpu=22,minW=3,fixedPpu=0}={}){
+  $$("[data-fit]",root).forEach(box=>{
+    const rows=$$(".srow",box);if(!rows.length)return;
+    let ppu=fixedPpu;
+    if(!ppu){const W=rows[0].clientWidth-14;ppu=maxPpu;
+      rows.forEach(r=>{const items=$$("[data-u]",r);const u=items.reduce((s,x)=>s+(+x.dataset.u||0),0);if(u)ppu=Math.min(ppu,(W-items.length*2)/u)})}
+    $$("[data-u]",box).forEach(el=>{el.style.width=Math.max(minW,(+el.dataset.u)*ppu)+"px"});
+    $$("[data-h]",box).forEach(el=>{el.style.height=el.dataset.h+"px"});
+  });
+}
+
+function closeTwin(){const v=$(".twinv");if(v)v.remove();syncScroll()}
+function refreshTwin(){const v=$(".twinv");if(v)renderTwin(v);renderChrome()}
+function openTwin(){
+  closeTwin();
+  const v=document.createElement("div");v.className="twinv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Bookcases");
+  document.body.append(v);syncScroll();renderTwin(v);
+  if(conn)loadTwin();
+  v.addEventListener("click",e=>{
+    const t=e.target.closest("button,[data-shelf]");if(!t)return;
+    if(t.id==="twBack"){closeTwin();return}
+    if(t.id==="twEdit"){openCaseEditor(caseById(tw.caseId));return}
+    if(t.id==="twAdd"||t.id==="twFirst"){openCaseEditor(null);return}
+    if(t.id==="twPlace"){openShelfPicker({title:"Which shelf?",sub:"Choose where the books go, then pick them."},k=>openBookPicker({k},ids=>addToShelf(k,ids)));return}
+    if(t.id==="twPhoto"){openShelfPicker({title:"Which shelf are you photographing?"},k=>photographShelf(k));return}
+    if(t.id==="twRetry"){loadTwin();return}
+    if(t.dataset.room!==undefined){tw.room=t.dataset.room;tw.caseId="";store.set("bc-tw-room",tw.room);renderTwin(v);return}
+    if(t.dataset.case){tw.caseId=t.dataset.case;store.set("bc-tw-case",tw.caseId);renderTwin(v);return}
+    if(t.dataset.shelf){openShelf(t.dataset.shelf);return}
+  });
+}
+function renderTwin(v){
+  const cases=twCases();
+  const rooms=[...new Set(cases.map(c=>c.room))];
+  if(!rooms.includes(tw.room))tw.room=rooms[0]||"";
+  const inRoom=cases.filter(c=>c.room===tw.room);
+  if(!inRoom.some(c=>c.id===tw.caseId))tw.caseId=(inRoom[0]||{}).id||"";
+  const c=caseById(tw.caseId);
+  const nUn=unplacedBooks().length;
+  const head=`<div class="statsv-head"><button class="roundbtn" id="twBack" aria-label="Back to shelves">${ICON.back}</button><div class="grow1"><div class="eyebrow">Shelf twin</div><h1>Bookcases</h1></div>${c?`<button class="roundbtn" id="twEdit" aria-label="Edit this bookcase">${ICON.pen.replace(/26/g,"20")}</button>`:""}</div>`;
+  if(twinOld){v.innerHTML=`<div class="statsv-inner">${head}<div class="notice"><strong>Update your Google script</strong><span>The bookcases need the new version of the script. Follow “Adding the shelf twin” in the setup guide, then come back.</span><button class="btn" id="twRetry">Check again</button></div></div>`;return}
+  if(!cases.length){v.innerHTML=`<div class="statsv-inner">${head}<div class="notice"><strong>Set up your first bookcase</strong><span>Tell the app which bookcases you have and how many shelves each one has. Then photograph each shelf and Claude puts your books in place.</span><button class="btn primary" id="twFirst">Add a bookcase</button></div></div>`;return}
+  const shelves=c?c.shelves.map(s=>{const k=`${c.id}:${s.n}`,list=onShelf(k),fc=freeCount(k,list);
+    return `<button class="bshelf" data-shelf="${k}" aria-label="Shelf ${s.n}: ${list.length} book${list.length===1?"":"s"}${fc!=null?`, room for about ${fc} more`:""}"><span class="sno">${s.n}</span><span class="srow">${spineBits(list,{maxH:72})}${fc!=null?`<span class="sfree" data-u="${Math.max(.8,fc*(list.length?list.reduce((a,b)=>a+unitsOf(b),0)/list.length:1.15))}" data-h="54">+${fc}</span>`:!list.length?`<span class="sempty">Empty: tap to add books</span>`:""}</span></button><span class="board" aria-hidden="true"></span>`}).join(""):"";
+  const total=c?c.shelves.reduce((s,x)=>s+onShelf(`${c.id}:${x.n}`).length,0):0;
+  v.innerHTML=`<div class="statsv-inner">${head}
+    <div class="chips twchips" role="group" aria-label="Room">${rooms.map(r=>`<button class="chip" data-room="${esc(r)}" aria-pressed="${r===tw.room}">${esc(r)}<span class="n">${cases.filter(x=>x.room===r).length}</span></button>`).join("")}</div>
+    <div class="castabs">${inRoom.map(x=>`<button class="castab" data-case="${x.id}" aria-pressed="${x.id===tw.caseId}">${esc(x.name)}</button>`).join("")}<button class="castab add" id="twAdd">+ Bookcase</button></div>
+    ${c?`<div class="casemeta">${total} book${total===1?"":"s"} · ${c.shelves.length} shelves</div><div class="bcase" data-fit>${shelves}</div>
+    <div class="twlegend"><span><span class="lg foil"></span>Special edition</span><span><span class="lg sig"></span>Signed</span><span><span class="lg free"></span>Free space, from your last photo</span></div>`:""}
+    ${nUn?`<div class="card twun"><div><b>${nUn} book${nUn===1?"":"s"} not on a shelf yet</b><span class="small muted">${books.filter(owned).length-nUn} of ${books.filter(owned).length} placed</span></div><button class="btn" id="twPlace">Place them</button></div>`:""}
+    ${hasClaude?`<button class="fab twfab" id="twPhoto">${ICON.cam}Photograph a shelf</button>`:""}
+  </div>`;
+  layoutSpines(v);
+}
+
+/* bookcase editor */
+function openCaseEditor(c){
+  const rooms=[...new Set(twCases().map(x=>x.room))];
+  const room=c?c.room:(tw.room||"");
+  const used=new Set(twCases().filter(x=>x.room===room).map(x=>x.name));
+  const letter=[..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].find(l=>!used.has("Bookcase "+l))||"";
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${c?"Edit bookcase":"New bookcase"}</div><h2>${c?esc(c.name):"Add a bookcase"}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="grid">
+      <div class="f"><label for="ceRoom">Room</label><input id="ceRoom" type="text" maxlength="60" list="dl-rooms" autocomplete="off" value="${esc(room)}" placeholder="Living room, office…"></div>
+      <div class="f"><label for="ceName">Bookcase name</label><input id="ceName" type="text" maxlength="60" autocomplete="off" value="${esc(c?c.name:"Bookcase "+letter)}"></div>
+      <div class="f"><label for="ceN">Shelves</label><select id="ceN">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${(c?c.shelves.length:5)===i+1?"selected":""}>${i+1}</option>`).join("")}</select></div>
+    </div>
+    <p class="small muted">Shelf 1 is the top one. Several rooms or bookcases? Add each one separately.</p>
+    ${datalist("dl-rooms",rooms)}
+    <p class="small err" id="ceMsg"></p>
+    <div class="actions" id="ceActs">${c?`<button class="btn danger left" id="ceDel">Delete</button>`:""}<button class="btn" data-close>Cancel</button><button class="btn primary" id="ceSave">${c?"Save":"Add bookcase"}</button></div>`);
+  const msg=$("#ceMsg",s);
+  $("#ceSave",s).onclick=async e=>{
+    const room=$("#ceRoom",s).value.trim(),name=$("#ceName",s).value.trim(),n=+$("#ceN",s).value;
+    if(!room||!name){msg.textContent="Give the room and the bookcase a name.";return}
+    if(c&&n<c.shelves.length){const lost=c.shelves.filter(x=>x.n>n).reduce((a,x)=>a+onShelf(`${c.id}:${x.n}`).length,0);
+      if(lost&&!e.target.dataset.ok){e.target.dataset.ok="1";e.target.textContent="Save anyway";msg.textContent=`${lost} book${lost===1?"":"s"} on the removed shelves will go back to “not on a shelf”.`;return}}
+    e.target.disabled=true;msg.textContent="";
+    try{const d=await api("twin_case",{bookcase:{id:c?c.id:"",room,name,shelves:n}});twin={cases:d.cases};store.set("bc-twin",twin);(d.books||[]).forEach(upsertBook);
+      tw.room=room;tw.caseId=d.id;store.set("bc-tw-room",room);store.set("bc-tw-case",d.id);closeSheet();refreshTwin();render();toast(c?"Bookcase saved":"Bookcase added")}
+    catch(err){e.target.disabled=false;msg.textContent=err.message}
+  };
+  if(c)$("#ceDel",s).onclick=()=>{
+    const n=c.shelves.reduce((a,x)=>a+onShelf(`${c.id}:${x.n}`).length,0);
+    $("#ceActs",s).innerHTML=`<div class="confirm"><span>Delete ${esc(c.name)}? ${n?`Its ${n} book${n===1?"":"s"} go back to “not on a shelf”. `:""}Your books are not deleted.</span><button class="btn" data-close>Keep</button><button class="btn dangerfill" id="ceYes">Delete</button></div>`;
+    $$("[data-close]",s).forEach(x=>x.onclick=closeSheet);
+    $("#ceYes",s).onclick=async()=>{try{const d=await api("twin_case_delete",{id:c.id});twin={cases:d.cases};store.set("bc-twin",twin);(d.books||[]).forEach(upsertBook);closeSheet();refreshTwin();render();toast("Bookcase deleted")}catch(err){handleApiError(err,"Couldn’t delete")}};
+  };
+}
+
+/* saving places */
+async function placeMoves(moves,okMsg){
+  try{const d=await api("twin_place",{moves});(d.books||[]).forEach(upsertBook);if(d.cases){twin={cases:d.cases};store.set("bc-twin",twin)}
+    render();refreshTwin();if(okMsg)toast(okMsg);return true}
+  catch(e){handleApiError(e,"Couldn’t save");return false}
+}
+const idsOn=(k,except=[])=>onShelf(k).map(b=>b.id).filter(id=>!except.includes(id));
+function addToShelf(k,ids){if(!ids.length)return Promise.resolve(false);return placeMoves([{shelf:k,ids:[...idsOn(k,ids),...ids]}],`${ids.length} book${ids.length===1?"":"s"} placed on ${shelfName(k,true)}`)}
+
+/* one shelf, in order */
+function openShelf(k){
+  const p=shelfParts(k),info=shelfInfo(k);if(!p||!info){toast("That shelf no longer exists.");return}
+  const list=onShelf(k),fc=freeCount(k,list);
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(p.c.room)} · ${esc(p.c.name)}</div><h2>Shelf ${p.n}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    ${list.length?`<div class="closeup" data-fit><div class="srow big">${spineBits(list,{big:true,maxH:170})}</div><span class="board" aria-hidden="true"></span></div>`:""}
+    <p class="small muted shmeta"><span><b>${list.length} book${list.length===1?"":"s"}</b>${list.length?", left to right":""}</span>${fc!=null?`<span>Room for about ${fc} more</span>`:""}${info.photo?`<span>Last photo ${esc(fmtDay(info.photo))}</span>`:""}</p>
+    <div class="actions grow">${hasClaude?`<button class="btn primary" id="shPhoto">${ICON.cam}${info.photo?"Re-photograph":"Photograph it"}</button>`:""}<button class="btn" id="shAdd">Add books here</button></div>
+    ${list.length?`<div class="sectlabel">Order · drag ☰ to rearrange</div><div class="olist" id="olist">${list.map((b,i)=>`<div class="orow" data-id="${b.id}"><span class="opos">${i+1}</span><span class="ochip ${colorCls(b)}"></span><button class="otxt" data-open="${b.id}"><span class="t">${esc(b.title)}</span><span class="s">No. ${pad(b.id)}${b.author?` · ${esc(b.author)}`:""}</span></button><button class="drag" aria-label="Move ${esc(b.title)}: drag, or use the arrow keys">☰</button></div>`).join("")}</div>`
+    :`<div class="notice"><strong>Nothing here yet</strong><span>${hasClaude?"Photograph the shelf and Claude finds the books, or add them by hand.":"Add the books that are on this shelf."}</span></div>`}`);
+  layoutSpines(s,{fixedPpu:26,minW:12});
+  const ph=$("#shPhoto",s);if(ph)ph.onclick=()=>photographShelf(k);
+  $("#shAdd",s).onclick=()=>openBookPicker({k,onCancel:()=>openShelf(k)},ids=>addToShelf(k,ids).then(()=>openShelf(k)));
+  const ol=$("#olist",s);if(!ol)return;
+  ol.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(o){closeSheet();openBook(+o.dataset.open)}});
+  const save=order=>{order.forEach((id,i)=>{const b=books.find(x=>x.id===id);if(b)b.shelfPos=i+1});openShelf(k);placeMoves([{shelf:k,ids:order}],"New order saved")};
+  const order=()=>$$(".orow",ol).map(r=>+r.dataset.id);
+  // drag by the ☰ handle; arrow keys do the same for keyboards
+  ol.addEventListener("keydown",e=>{const h=e.target.closest(".drag");if(!h||!["ArrowUp","ArrowDown"].includes(e.key))return;e.preventDefault();
+    const ids=order(),i=ids.indexOf(+h.closest(".orow").dataset.id),j=i+(e.key==="ArrowUp"?-1:1);if(j<0||j>=ids.length)return;[ids[i],ids[j]]=[ids[j],ids[i]];save(ids);
+    setTimeout(()=>{const nh=$(`.orow[data-id="${ids[j]}"] .drag`);if(nh)nh.focus()},50)});
+  ol.addEventListener("pointerdown",e=>{
+    const h=e.target.closest(".drag");if(!h)return;e.preventDefault();
+    const rows=$$(".orow",ol),row=h.closest(".orow"),from=rows.indexOf(row),rh=row.offsetHeight,y0=e.clientY;let to=from;
+    row.classList.add("dragging");h.setPointerCapture(e.pointerId);
+    const move=ev=>{const dy=ev.clientY-y0;row.style.transform=`translateY(${dy}px)`;to=Math.max(0,Math.min(rows.length-1,from+Math.round(dy/rh)));
+      rows.forEach((r,j)=>{if(r===row)return;r.style.transform=(j>from&&j<=to)?`translateY(${-rh}px)`:(j<from&&j>=to)?`translateY(${rh}px)`:""})};
+    const end=()=>{h.removeEventListener("pointermove",move);h.removeEventListener("pointerup",end);h.removeEventListener("pointercancel",end);
+      rows.forEach(r=>r.style.transform="");row.classList.remove("dragging");
+      if(to!==from){const ids=rows.map(r=>+r.dataset.id);const [m]=ids.splice(from,1);ids.splice(to,0,m);save(ids)}};
+    h.addEventListener("pointermove",move);h.addEventListener("pointerup",end);h.addEventListener("pointercancel",end);
+  });
+}
+
+/* pickers */
+function openShelfPicker(o,onPick){
+  const cases=twCases();
+  const s=sheet(`<div class="sheet-head"><div><h2>${esc(o.title)}</h2>${o.sub?`<div class="sub">${esc(o.sub)}</div>`:""}</div><button class="x" id="spX" aria-label="Close">×</button></div>
+    ${cases.length?[...new Set(cases.map(c=>c.room))].map(r=>`<div class="sectlabel">${esc(r)}</div>${cases.filter(c=>c.room===r).map(c=>`<div class="card spcase"><div class="spname">${esc(c.name)}</div><div class="spgrid">${c.shelves.map(x=>{const k=`${c.id}:${x.n}`,n=onShelf(k).length;
+      return `<button class="spbtn" data-k="${k}" ${o.current===k?"aria-current=\"true\"":""}><b>Shelf ${x.n}</b><span>${n} book${n===1?"":"s"}${o.current===k?" · here now":""}</span></button>`}).join("")}</div></div>`).join("")}`).join("")
+      :`<div class="notice"><strong>No bookcases yet</strong><button class="btn primary" id="spSetup">Add a bookcase</button></div>`}
+    ${o.allowOff?`<div class="actions"><button class="btn" id="spOff">Take it off the shelf</button></div>`:""}`);
+  $("#spX",s).onclick=()=>{closeSheet();if(o.onCancel)o.onCancel()};
+  s.addEventListener("click",e=>{const b=e.target.closest("[data-k]");if(b){closeSheet();onPick(b.dataset.k)}});
+  const su=$("#spSetup",s);if(su)su.onclick=()=>openCaseEditor(null);
+  const off=$("#spOff",s);if(off)off.onclick=()=>{closeSheet();onPick(null)};
+}
+function openBookPicker(o,onDone){
+  const k=o.k,picked=new Set(o.picked||[]);let q="";
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${k?esc(shelfName(k)):""}</div><h2>${o.single?"Which book is it?":"Add books"}</h2></div><button class="x" id="bpX" aria-label="Close">×</button></div>
+    <input class="field" id="bpQ" type="search" placeholder="Search your books" autocomplete="off">
+    <div class="bplist" id="bpList"></div>
+    ${o.single?"":`<div class="actions sticky"><button class="btn" id="bpCancel">Cancel</button><button class="btn primary" id="bpGo" disabled>Add</button></div>`}`);
+  const cancel=()=>{closeSheet();if(o.onCancel)o.onCancel()};
+  $("#bpX",s).onclick=cancel;const bc=$("#bpCancel",s);if(bc)bc.onclick=cancel;
+  const paint=()=>{
+    const nq=norm(q).trim();
+    let list=books.filter(b=>owned(b)&&b.shelf!==k);
+    if(nq)list=list.map(b=>[b,searchScore(b,nq)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]).map(x=>x[0]).slice(0,80);
+    else list=list.filter(b=>!isPlaced(b)).sort((a,b)=>a.id-b.id);
+    $("#bpList",s).innerHTML=(nq?"":`<div class="sectlabel">Not on a shelf yet (${list.length})${o.single?"":" · search to find books on other shelves"}</div>`)+
+      (list.length?list.map(b=>`<button class="bprow" data-id="${b.id}" aria-pressed="${picked.has(b.id)}"><span class="ochip ${colorCls(b)}"></span><span class="otxt"><span class="t">${esc(b.title)}</span><span class="s">No. ${pad(b.id)}${b.author?` · ${esc(b.author)}`:""}${isPlaced(b)?` · on ${esc(shelfName(b.shelf,true))}`:""}</span></span>${o.single?"":`<span class="tick" aria-hidden="true"></span>`}</button>`).join("")
+        :`<p class="muted small">${nq?"No books match.":"Every book is on a shelf. Search to move one from another shelf."}</p>`);
+    const go=$("#bpGo",s);if(go){go.disabled=!picked.size;go.textContent=picked.size?`Add ${picked.size} book${picked.size===1?"":"s"}`:"Add"}
+  };
+  $("#bpQ",s).addEventListener("input",e=>{q=e.target.value;paint()});
+  $("#bpList",s).addEventListener("click",e=>{const r=e.target.closest(".bprow");if(!r)return;const id=+r.dataset.id;
+    if(o.single){closeSheet();onDone([id]);return}
+    picked.has(id)?picked.delete(id):picked.add(id);r.setAttribute("aria-pressed",String(picked.has(id)));paint()});
+  const go=$("#bpGo",s);if(go)go.onclick=()=>{closeSheet();onDone([...picked])};
+  paint();
+}
+
+/* book page: where it is */
+function whereHtml(b){
+  if(!owned(b)||!twCases().length)return "";
+  if(!isPlaced(b))return `<div class="card where"><div class="whhead"><h3>Where it is</h3></div><p class="small muted">Not on a shelf in your bookcases yet.</p><div class="actions"><button class="btn" id="whMove">Place it</button></div></div>`;
+  const p=shelfParts(b.shelf),list=onShelf(b.shelf),i=list.findIndex(x=>x.id===b.id);
+  const L=list[i-1],R=list[i+1],info=shelfInfo(b.shelf);
+  const mini=p.c.shelves.map(x=>{const k=`${p.c.id}:${x.n}`;return `<span class="srow${k===b.shelf?" here":""}">${spineBits(onShelf(k),{hl:b.id,maxH:26})}</span><span class="board"></span>`}).join("");
+  return `<div class="card where"><div class="whhead"><h3>Where it is</h3>${info&&info.photo?`<span class="small muted">photo ${esc(fmtDay(info.photo))}</span>`:""}</div>
+    <div class="small muted">${esc(p.c.room)} › ${esc(p.c.name)} › <b class="ink">Shelf ${p.n}</b></div>
+    <div class="whbody"><div class="minicase" data-fit role="img" aria-label="${esc(p.c.name)}, this book highlighted on shelf ${p.n}">${mini}</div>
+      <div class="whtxt"><div class="big">${ordinal(i+1)}</div><div>from the left on shelf ${p.n}</div>${L||R?`<div class="small muted">${L&&R?`Between <b class="ink">${esc(L.title)}</b> and <b class="ink">${esc(R.title)}</b>`:L?`After <b class="ink">${esc(L.title)}</b>`:`Before <b class="ink">${esc(R.title)}</b>`}</div>`:""}</div></div>
+    <div class="actions grow"><button class="btn primary" id="whShow">Show the shelf</button><button class="btn" id="whMove">Move it</button></div></div>`;
+}
+function wireWhere(v,b){
+  const card=$(".where",v);if(!card)return;
+  layoutSpines(card,{maxPpu:7,minW:2});
+  const sh=$("#whShow",v);if(sh)sh.onclick=()=>openShelf(b.shelf);
+  $("#whMove",v).onclick=()=>openShelfPicker({title:isPlaced(b)?"Move it to which shelf?":"Which shelf is it on?",sub:"It goes at the right end; reorder it on the shelf.",current:b.shelf,allowOff:isPlaced(b)},async k=>{
+    const ok=k===null?await placeMoves([{shelf:b.shelf,ids:idsOn(b.shelf,[b.id])}],"Taken off the shelf"):await placeMoves([{shelf:k,ids:[...idsOn(k,[b.id]),b.id]}],`Moved to ${shelfName(k,true)}`);
+    if(ok&&$(".book"))openBook(b.id);
+  });
+}
+
+/* photograph a shelf → Claude reads the spines → you check → saved */
+const SHELF_STEPS=[["The whole shelf","Stand straight in front of it. Long shelf? Start with the left half"],["Right half (optional)","Only for long shelves. Otherwise tap Done"]];
+function photographShelf(k){
+  if(!hasClaude){toast("Shelf photos need the Anthropic key in your Google script.");return}
+  if(!budgetLeft()){toast("This month’s Claude limit is reached. Add the books by hand for now.");return}
+  closeSheet();
+  openCamera({steps:SHELF_STEPS,max:2,noIsbn:true,frame:"full"},r=>{if(r&&r.photos&&r.photos.length)reviewShelf(k,r.photos)});
+}
+function copyCands(b){
+  const wk=window.BCStats.workKey(b);
+  return books.filter(x=>owned(x)&&(x.id===b.id||(b.workId&&x.workId===b.workId)||window.BCStats.workKey(x)===wk)).sort((a,c)=>a.id-c.id);
+}
+async function reviewShelf(k,photos){
+  let s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(shelfName(k))}</div><h2>Reading the spines…</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="notice"><strong>Claude is reading your shelf</strong><span>About 10–30 seconds. Keep this open.</span></div>`);
+  let d;
+  try{const images=await Promise.all(photos.map(p=>blobToB64(p.blob)));d=await api("twin_read",{images})}
+  catch(e){
+    if(e.budget){budget=e.budget;store.set("bc-budget",budget)}
+    if(!s.isConnected)return;
+    s.innerHTML=`<div class="sheet-head"><div><div class="eyebrow">${esc(shelfName(k))}</div><h2>Couldn’t read it</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+      <div class="notice"><span>${esc(e.message||"Something went wrong.")}</span><div class="actions"><button class="btn" id="rvAdd">Add books by hand</button><button class="btn primary" id="rvAgain">Try again</button></div></div>`;
+    $$("[data-close]",s).forEach(x=>x.onclick=closeSheet);$("#rvAgain",s).onclick=()=>photographShelf(k);$("#rvAdd",s).onclick=()=>openShelf(k);return;
+  }finally{photos.forEach(p=>URL.revokeObjectURL(p.url))}
+  if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
+  // one row per spine, left to right
+  const used=new Set(),rows=[];
+  for(const sp of d.spines||[]){
+    const b=sp.id?books.find(x=>x.id===sp.id&&owned(x)):null;
+    if(b){const cands=copyCands(b);
+      const pick=cands.find(x=>x.shelf===k&&!used.has(x.id))||cands.find(x=>!used.has(x.id)&&!isPlaced(x))||cands.find(x=>x.id===b.id&&!used.has(x.id))||cands.find(x=>!used.has(x.id));
+      if(!pick)continue;used.add(pick.id);
+      rows.push({read:sp.read,id:pick.id,cands:cands.length>1?cands.map(x=>x.id):null,unsure:!sp.sure,skip:false});
+    }else rows.push({read:sp.read,id:null,cands:null,unsure:true,skip:true});
+  }
+  const st={rows,free:d.free,cost:+d.costUsd||0,step:"review",fate:{}};
+  showReview(k,st);
+}
+function showReview(k,st){
+  const byId=id=>books.find(x=>x.id===id);
+  const isDone=r=>r.done||(!r.skip&&r.id&&!r.unsure&&!r.cands);const nOk=st.rows.filter(r=>isDone(r)&&!r.skip).length,nCheck=st.rows.filter(r=>!isDone(r)).length;
+  const chip=(act,label,on)=>`<button class="rvchip" data-act="${act}" aria-pressed="${!!on}">${esc(label)}</button>`;
+  let n=0;
+  const rowHtml=(r,i)=>{const b=r.id?byId(r.id):null;const pos=r.skip?"–":String(++n);
+    const elsewhere=b&&isPlaced(b)&&b.shelf!==k?` · now on ${shelfName(b.shelf,true)}`:"";
+    const check=!isDone(r);
+    return `<div class="rvrow${check?" check":""}${r.skip?" skipped":""}" data-i="${i}">
+      <div class="rvtop"><span class="rvpos">${pos}</span>${b?`<span class="ochip ${colorCls(b)}"></span>`:""}<span class="otxt"><span class="t">${b?(r.cands&&!r.done?`${esc(b.title)}: which copy?`:esc(b.title)+(r.unsure?"?":"")):`Couldn’t match “${esc(r.read||"?")}”`}</span>
+        <span class="s">${b?(r.cands&&!r.done?`You have ${r.cands.length} copies`:r.unsure&&!r.done?`Spine hard to read${r.read?`: “${esc(r.read)}”`:""}`:`No. ${pad(b.id)}${b.publisher?` · ${esc(b.publisher)}`:""}`)+esc(elsewhere):"Not found in your catalog"}</span></span>${!check&&!r.skip?`<span class="okmark" role="img" aria-label="Matched">✓</span>`:""}</div>
+      ${r.cands?`<div class="rvchips">${r.cands.map(id=>{const c=byId(id);return chip("copy:"+id,`No. ${id}${c&&c.publisher?` · ${c.publisher}`:""}`,!r.skip&&r.id===id)}).join("")}${chip("skip","Not here",r.skip)}</div>`
+        :r.unsure&&b?`<div class="rvchips">${chip("yes","Yes",!r.skip)}${chip("pick","Pick another",false)}${chip("skip","Not mine",r.skip)}</div>`
+        :!b?`<div class="rvchips">${chip("pick","Pick the book",false)}${chip("skip","Skip",r.skip)}</div>`:""}
+    </div>`};
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(shelfName(k))}</div><h2>${st.rows.length} book${st.rows.length===1?"":"s"} found</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="rvsum"><span class="pill okp">✓ ${nOk} matched</span>${nCheck?`<span class="pill chk">${nCheck} to check</span>`:""}</div>
+    ${st.rows.length?`<div class="rvlist">${st.rows.map(rowHtml).join("")}</div>`:`<div class="notice"><span>No spines could be read. Try a straighter, closer photo, or add the books by hand.</span></div>`}
+    <p class="small muted center">This photo cost about $${st.cost.toFixed(3)} · ${esc(budgetText())}</p>
+    <div class="actions"><button class="btn" id="rvMissing">+ A book it missed</button><button class="btn primary" id="rvSave" ${st.rows.some(r=>r.id&&!r.skip)?"":"disabled"}>Save this shelf</button></div>`);
+  s.addEventListener("click",e=>{
+    const c=e.target.closest(".rvchip");if(!c)return;const i=+c.closest(".rvrow").dataset.i,r=st.rows[i],act=c.dataset.act;
+    if(act==="skip"){r.skip=true;r.done=true}
+    else if(act==="yes"){r.skip=false;r.unsure=false;r.done=true}
+    else if(act.startsWith("copy:")){const id=+act.slice(5);const other=st.rows.find(x=>x!==r&&x.id===id&&!x.skip);if(other)other.id=r.id;r.id=id;r.skip=false;r.done=true}
+    else if(act==="pick"){openBookPicker({k:null,single:true,onCancel:()=>showReview(k,st)},ids=>{const id=ids[0];st.rows.forEach(x=>{if(x!==r&&x.id===id)x.skip=true});r.id=id;r.cands=null;r.unsure=false;r.skip=false;r.done=true;showReview(k,st)});return}
+    showReview(k,st);
+  });
+  $("#rvMissing",s).onclick=()=>openBookPicker({k:null,single:true,onCancel:()=>showReview(k,st)},ids=>{const id=ids[0];if(!st.rows.some(x=>x.id===id&&!x.skip))st.rows.push({read:"",id,cands:null,unsure:false,skip:false});showReview(k,st)});
+  $("#rvSave",s).onclick=()=>shelfChanges(k,st);
+}
+function shelfChanges(k,st){
+  const fin=[...new Set(st.rows.filter(r=>r.id&&!r.skip).map(r=>r.id))];
+  const prev=idsOn(k),missing=prev.filter(id=>!fin.includes(id));
+  if(!missing.length)return saveShelfPhoto(k,st,fin,prev);
+  const comeIn=fin.filter(id=>!prev.includes(id)).map(id=>books.find(b=>b.id===id)).filter(Boolean);
+  const same=a=>a.filter(id=>prev.includes(id)&&fin.includes(id));
+  const reordered=same(prev).join()!==same(fin).join();
+  const fate=st.fate;missing.forEach(id=>{if(!fate[id])fate[id]={how:"off"}});
+  const opt=(id,how,label)=>`<button class="rvchip" data-id="${id}" data-how="${how}" aria-pressed="${fate[id].how===how}">${esc(label)}</button>`;
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(shelfName(k))}</div><h2>${missing.length+comeIn.length+(reordered?1:0)} change${missing.length+comeIn.length+(reordered?1:0)===1?"":"s"} since ${esc(fmtDay((shelfInfo(k)||{}).photo)||"last time")}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    ${comeIn.length?`<div class="card chg"><span class="tagp new">New here</span>${comeIn.map(b=>`<div><b>${esc(b.title)}</b><span class="small muted">${isPlaced(b)?` · was on ${esc(shelfName(b.shelf,true))}`:" · wasn’t on a shelf"}</span></div>`).join("")}</div>`:""}
+    <div class="card chg"><span class="tagp gone">Not in the photo</span>${missing.map(id=>{const b=books.find(x=>x.id===id)||{title:"No. "+id};return `<div class="gone1"><b>${esc(b.title)}</b><div class="rvchips">${opt(id,"off","Not on a shelf now")}${opt(id,"keep","Keep it here")}${opt(id,"move",fate[id].how==="move"&&fate[id].to?`Moved to ${shelfName(fate[id].to,true)}`:"Moved…")}</div></div>`}).join("")}
+      <p class="small muted">“Keep it here” if the photo just missed it.</p></div>
+    ${reordered?`<div class="card chg"><span class="tagp ord">Order changed</span><span class="small muted">The shelf will follow the new order from the photo.</span></div>`:""}
+    <div class="actions"><button class="btn" id="chBack">Back</button><button class="btn primary" id="chSave">Update the twin</button></div>`);
+  s.addEventListener("click",e=>{const c=e.target.closest("[data-how]");if(!c)return;const id=+c.dataset.id;
+    if(c.dataset.how==="move"){openShelfPicker({title:"Where is it now?",onCancel:()=>shelfChanges(k,st)},to=>{fate[id]=to===k?{how:"keep"}:{how:"move",to};shelfChanges(k,st)});return}
+    fate[id]={how:c.dataset.how};shelfChanges(k,st)});
+  $("#chBack",s).onclick=()=>showReview(k,st);
+  $("#chSave",s).onclick=()=>saveShelfPhoto(k,st,fin,prev);
+}
+async function saveShelfPhoto(k,st,fin,prev){
+  const ids=fin.slice();
+  prev.forEach((id,i)=>{if(!ids.includes(id)&&st.fate[id]&&st.fate[id].how==="keep")ids.splice(Math.min(i,ids.length),0,id)});
+  const moves=[{shelf:k,ids,free:st.free,photo:true}];
+  const to={};Object.entries(st.fate).forEach(([id,f])=>{if(f.how==="move"&&f.to&&prev.includes(+id)&&!ids.includes(+id))(to[f.to]=to[f.to]||[]).push(+id)});
+  Object.entries(to).slice(0,5).forEach(([t,list])=>moves.push({shelf:t,ids:[...idsOn(t,[...ids,...list]),...list]}));
+  const btn=$("#chSave")||$("#rvSave");if(btn){btn.disabled=true;btn.textContent="Saving…"}
+  if(await placeMoves(moves,"Shelf saved"))openShelf(k);else if(btn){btn.disabled=false;btn.textContent="Try again"}
+}
+
 /* ---------- boot ---------- */
 render();
-if(conn){loadBooks();loadStatus()}
+if(conn){loadBooks();loadStatus();loadTwin()}
 })();
