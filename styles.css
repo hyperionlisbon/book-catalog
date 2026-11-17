@@ -328,3 +328,10 @@ fieldset{border:0;padding:0;margin:0;display:grid;gap:10px}
 .camswitch.show{visibility:visible}
 .focusring{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #fff;border-radius:50%;pointer-events:none}
 @media (prefers-reduced-motion:no-preference){.focusring.on{animation:ring .6s ease-out}@keyframes ring{from{transform:scale(1.5);opacity:0}to{transform:scale(1);opacity:1}}}
+
+/* Searching: only the search row stays in the header */
+body.searching .brand,body.searching .stats,body.searching .chips,body.searching .selects{display:none}
+body.searching .top .wrap{padding-block:10px}
+body.searching .fab{display:none}
+.hiddenhint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--paper);border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:14px}
+.hiddenhint .btn{min-height:38px;font-size:13px}

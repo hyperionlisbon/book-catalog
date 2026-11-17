@@ -83,15 +83,47 @@ function handleApiError(e,fallback){
 function upsertBook(b){b={...b,id:+b.id};books=books.filter(x=>x.id!==b.id).concat(b);store.set("bc-books",books);return b}
 
 /* ---------- list: the shelf ---------- */
+/* Search: little words are ignored, words match from their start, comments are not searched,
+   and the best matches (the exact title first) come first. A short number matches a volume or catalogue number. */
+const STOPWORDS=new Set(["a","an","the","of","and","or","to","in","on","for","o","os","as","e","de","do","da","dos","das","um","uma","em","no","na","nos","nas","com","por","el","la","los","las","y"]);
+const wordsOf=s=>norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+function searchScore(b,q){
+  let terms=q.split(/\s+/).filter(Boolean);
+  const content=terms.filter(t=>!STOPWORDS.has(t));if(content.length)terms=content;
+  const title=norm(b.title), tw=wordsOf(b.title);
+  const pw=wordsOf([b.title,b.author,b.series,b.publisher,b.location].join(" "));
+  const ew=wordsOf([b.genre,b.subgenre].join(" "));
+  const vols=String(b.seriesNo??"").split(/[,;&]/).map(x=>parseInt(x,10)).filter(n=>n>0);
+  const isbns=String(b.isbn||"").replace(/[^0-9Xx,; ]/g,"").split(/[,;\s]+/).filter(Boolean);
+  const qWords=q.replace(/[^a-z0-9 ]/g," ").trim().replace(/\s+/g," ");
+  let inExtra=false, numHit=false;
+  for(const t of terms){
+    if(/^\d+$/.test(t)){
+      if(t.length<=4){if(+b.id===+t||vols.includes(+t)){numHit=true;continue}return 0}
+      if(isbns.some(x=>x.includes(t))){numHit=true;continue}return 0;
+    }
+    if(pw.some(w=>w.startsWith(t)))continue;
+    if(ew.some(w=>w.startsWith(t))){inExtra=true;continue}
+    return 0;
+  }
+  const textTerms=terms.filter(t=>!/^\d+$/.test(t));
+  let score=inExtra?20:50;
+  if(textTerms.length&&textTerms.every(t=>tw.some(w=>w.startsWith(t))))score=80;
+  if(qWords&&title.replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").includes(qWords))score=100;
+  if(numHit)score+=5;
+  return score;
+}
 function filtered(){
   const q=norm(st.q).trim();
   let r=books.filter(b=>(st.status?b.status===st.status:owned(b))&&(!st.genre||b.genre===st.genre)&&(!st.lang||b.language===st.lang));
-  if(q){const terms=q.split(/\s+/);r=r.filter(b=>{const hay=norm([b.title,b.author,b.series,b.publisher,b.isbn,b.genre,b.subgenre,b.comments,b.location].join(" "));return terms.every(t=>hay.includes(t))})}
   const by=f=>(a,b)=>norm(f(a)).localeCompare(norm(f(b)));
   const sorters={"id-desc":(a,b)=>b.id-a.id,"id-asc":(a,b)=>a.id-b.id,title:by(b=>b.title),author:by(b=>b.author),
     rating:(a,b)=>(+b.rating||0)-(+a.rating||0)||a.id-b.id,
     series:(a,b)=>norm(a.series||"~").localeCompare(norm(b.series||"~"))||(parseFloat(a.seriesNo)||0)-(parseFloat(b.seriesNo)||0)};
-  return r.sort(sorters[st.sort]||sorters["id-desc"]);
+  const sorter=sorters[st.sort]||sorters["id-desc"];
+  if(!q)return r.sort(sorter);
+  const scored=r.map(b=>[b,searchScore(b,q)]).filter(x=>x[1]>0);
+  return scored.sort((x,y)=>y[1]-x[1]||sorter(x[0],y[0])).map(x=>x[0]);
 }
 function renderChrome(){
   const counts={};books.forEach(b=>counts[b.status]=(counts[b.status]||0)+1);
@@ -128,14 +160,22 @@ function renderList(){
   }
   if(!books.length){list.innerHTML=`<div class="notice"><strong>Loading your shelves…</strong><span>Fetching your books from your Google Sheet.</span></div>`;$("#moreWrap").hidden=true;return}
   const r=filtered();
-  if(!r.length){list.innerHTML=`<div class="notice"><strong>No books match</strong><span>Try a different search or clear the filters.</span></div>`;$("#moreWrap").hidden=true;return}
-  list.innerHTML=`<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;
+  // A search inside one list (e.g. "Read") can hide the book you're looking for: say so, with a way out.
+  let hidden=0;
+  if(st.q.trim()&&(st.status||st.genre||st.lang)){const keep={...st};Object.assign(st,{status:"",genre:"",lang:""});
+    const all=filtered().filter(b=>owned(b)||keep.status==="Wishlist"||b.status==="Wishlist");Object.assign(st,{status:keep.status,genre:keep.genre,lang:keep.lang});
+    hidden=all.filter(b=>!r.includes(b)).length}
+  const hint=hidden?`<div class="hiddenhint"><span>${hidden} more match${hidden===1?"es":""} outside your filters</span><button class="btn" id="showAll">Search all books</button></div>`:"";
+  const wire=()=>{const x=$("#showAll");if(x)x.onclick=()=>{st.status="";st.genre="";st.lang="";saveView();render()}};
+  if(!r.length){list.innerHTML=`<div class="notice"><strong>No books match</strong><span>${hidden?"":"Try a different search or clear the filters."}</span>${hint}</div>`;$("#moreWrap").hidden=true;wire();return}
+  list.innerHTML=`${hint}<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;wire();
   $("#moreWrap").hidden=r.length<=st.shown;
   $("#moreBtn").textContent=`Show more (${r.length-st.shown} left)`;
 }
 function render(){refreshWorkCount();renderChrome();renderList();const sv=$(".statsv");if(sv)renderStats(sv)}
 
-$("#q").addEventListener("input",e=>{st.q=e.target.value;st.shown=60;renderList()});
+// While there is text in the search box, the header shrinks to the search row, so results stay visible above the phone keyboard.
+$("#q").addEventListener("input",e=>{st.q=e.target.value;st.shown=60;document.body.classList.toggle("searching",!!st.q.trim());renderList();window.scrollTo(0,0)});
 $("#statusChips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;st.status=c.dataset.status;st.shown=60;saveView();render()});
 $("#fGenre").addEventListener("change",e=>{st.genre=e.target.value;st.shown=60;saveView();renderList()});
 $("#fLang").addEventListener("change",e=>{st.lang=e.target.value;st.shown=60;saveView();renderList()});
