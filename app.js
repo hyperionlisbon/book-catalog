@@ -178,7 +178,9 @@ function renderList(){
   const hint=hidden?`<div class="hiddenhint"><span>${hidden} more match${hidden===1?"es":""} outside your filters</span><button class="btn" id="showAll">Search all books</button></div>`:"";
   const wire=()=>{const x=$("#showAll");if(x)x.onclick=()=>{st.status="";st.mark="";st.genre="";st.lang="";saveView();render()}};
   if(!r.length){list.innerHTML=`<div class="notice"><strong>No books match</strong><span>${hidden?"":"Try a different search or clear the filters."}</span>${hint}</div>`;$("#moreWrap").hidden=true;wire();return}
-  list.innerHTML=`${hint}<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;wire();
+  const todo=backlog.length&&!st.q.trim()?`<div class="hiddenhint todohint"><span><b>${backlog.length} book${backlog.length===1?"":"s"}</b> seen on your shelves ${backlog.length===1?"isn’t":"aren’t"} in your catalog yet</span><button class="btn" id="todoBtn">Add ${backlog.length===1?"it":"them"}</button></div>`:"";
+  list.innerHTML=`${todo}${hint}<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;wire();
+  const tb=$("#todoBtn");if(tb)tb.onclick=()=>openBacklog();
   $("#moreWrap").hidden=r.length<=st.shown;
   $("#moreBtn").textContent=`Show more (${r.length-st.shown} left)`;
 }
@@ -250,7 +252,7 @@ function openSettings(){
     $("#forgetBtn",s).onclick=()=>{
       $("#setActs",s).innerHTML=`<div class="confirm"><span>Remove the connection and the saved book list from this phone? Your Google Sheet is not touched.</span><button class="btn" id="fNo">Keep</button><button class="btn dangerfill" id="fYes">Disconnect</button></div>`;
       $("#fNo",s).onclick=()=>{closeSheet();openSettings()};
-      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude","bc-twin"].forEach(store.del);twin=null;conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
+      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude","bc-twin","bc-backlog"].forEach(store.del);twin=null;backlog=[];conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
     };
     $("#reloadBtn",s).onclick=()=>{closeSheet();loadBooks();loadStatus()};
   }
@@ -777,7 +779,7 @@ function findDupe(r,selfId){
 }
 function datalist(id,vals){return `<datalist id="${id}">${vals.map(v=>`<option value="${esc(v)}"></option>`).join("")}</datalist>`}
 
-function openForm(b,capture,pre){
+function openForm(b,capture,pre,after){
   const isNew=!b;const v=b?{...b}:{status:"TBR",rating:0,...(pre||{})};
   const uniq=k=>[...new Set(books.map(x=>x[k]).filter(Boolean).map(String))].sort();
   const inp=(k,label,cls="",extra="")=>`<div class="f ${cls}" data-f="${k}"><label for="i-${k}">${label}<span class="src"></span></label><input id="i-${k}" name="${k}" type="text" value="${esc(v[k]??"")}" autocomplete="off" ${extra}></div>`;
@@ -953,6 +955,7 @@ function openForm(b,capture,pre){
       photos.forEach(p=>URL.revokeObjectURL(p.url));
       closeSheet();render();
       if(buyInto){toast(`Moved to your shelves: No. ${pad(saved.id)}`)}else if(isNew){toast(`Added as No. ${pad(saved.id)}`)}else{toast("Saved");if($(".book"))openBook(saved.id)}
+      if(after&&isNew&&!buyInto){try{await after(saved)}catch(e){}}
     }catch(e){btn.disabled=false;fs.textContent="";handleApiError(e,"Couldn’t save")}
   };
 }
@@ -1113,10 +1116,12 @@ function renderStats(v){
 /* ---------- shelf twin: bookcases, shelves, where each book is ---------- */
 let twin=store.get("bc-twin",null); // {cases:[{id,room,name,shelves:[{n,free,photo}]}]}
 let twinOld=false; // the Google script doesn't know the shelf twin yet
+let backlog=store.get("bc-backlog",[]); // books seen on shelf photos that aren't in the catalog yet
+function setBacklog(list){backlog=Array.isArray(list)?list:[];store.set("bc-backlog",backlog);renderList();const v=$(".twinv");if(v)renderTwin(v)}
 const tw={room:store.get("bc-tw-room",""),caseId:store.get("bc-tw-case","")};
 const ICON_CASE=`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 3h16v18H4zM4 9h16M4 15h16M8 5v3M11 5v3M8 11v3M14 11v3M8 17v3M11 17v3M16 17v3"/></svg>`;
 async function loadTwin(){
-  try{const d=await api("twin_get");twin={cases:d.cases||[]};twinOld=false;store.set("bc-twin",twin);refreshTwin()}
+  try{const d=await api("twin_get");twin={cases:d.cases||[]};twinOld=false;store.set("bc-twin",twin);if(d.backlog)setBacklog(d.backlog);refreshTwin()}
   catch(e){if(e.code==="unknown_action"){twinOld=true;twin=null;store.del("bc-twin");refreshTwin()}}
 }
 const twCases=()=>(twin&&twin.cases)||[];
@@ -1169,6 +1174,7 @@ function openTwin(){
     if(t.id==="twPlace"){openShelfPicker({title:"Which shelf?",sub:"Choose where the books go, then pick them."},k=>openBookPicker({k},ids=>addToShelf(k,ids)));return}
     if(t.id==="twPhoto"){openShelfPicker({title:"Which shelf are you photographing?"},k=>photographShelf(k));return}
     if(t.id==="twRetry"){loadTwin();return}
+    if(t.id==="twTodo"){openBacklog();return}
     if(t.dataset.room!==undefined){tw.room=t.dataset.room;tw.caseId="";store.set("bc-tw-room",tw.room);renderTwin(v);return}
     if(t.dataset.case){tw.caseId=t.dataset.case;store.set("bc-tw-case",tw.caseId);renderTwin(v);return}
     if(t.dataset.shelf){openShelf(t.dataset.shelf);return}
@@ -1194,6 +1200,7 @@ function renderTwin(v){
     ${c?`<div class="casemeta">${total} book${total===1?"":"s"} · ${c.shelves.length} shelves</div><div class="bcase" data-fit>${shelves}</div>
     <div class="twlegend"><span><span class="lg foil"></span>Special edition</span><span><span class="lg sig"></span>Signed</span><span><span class="lg free"></span>Free space, from your last photo</span></div>`:""}
     ${nUn?`<div class="card twun"><div><b>${nUn} book${nUn===1?"":"s"} not on a shelf yet</b><span class="small muted">${books.filter(owned).length-nUn} of ${books.filter(owned).length} placed</span></div><button class="btn" id="twPlace">Place them</button></div>`:""}
+    ${backlog.length?`<div class="card twun"><div><b>${backlog.length} to add to your catalog</b><span class="small muted">Seen on your shelf photos</span></div><button class="btn" id="twTodo">Review</button></div>`:""}
     ${hasClaude?`<button class="fab twfab" id="twPhoto">${ICON.cam}Photograph a shelf</button>`:""}
   </div>`;
   layoutSpines(v);
@@ -1372,44 +1379,46 @@ async function reviewShelf(k,photos){
       const pick=cands.find(x=>x.shelf===k&&!used.has(x.id))||cands.find(x=>!used.has(x.id)&&!isPlaced(x))||cands.find(x=>x.id===b.id&&!used.has(x.id))||cands.find(x=>!used.has(x.id));
       if(!pick)continue;used.add(pick.id);
       rows.push({read:sp.read,id:pick.id,cands:cands.length>1?cands.map(x=>x.id):null,unsure:!sp.sure,skip:false});
-    }else rows.push({read:sp.read,id:null,cands:null,unsure:true,skip:true});
+    }else rows.push({read:sp.read,title:sp.title||"",author:sp.author||"",id:null,cands:null,unsure:true,skip:true,backlog:true,done:true});
   }
   const st={rows,free:d.free,cost:+d.costUsd||0,step:"review",fate:{}};
   showReview(k,st);
 }
 function showReview(k,st){
   const byId=id=>books.find(x=>x.id===id);
-  const isDone=r=>r.done||(!r.skip&&r.id&&!r.unsure&&!r.cands);const nOk=st.rows.filter(r=>isDone(r)&&!r.skip).length,nCheck=st.rows.filter(r=>!isDone(r)).length;
+  const isDone=r=>r.done||(!r.skip&&r.id&&!r.unsure&&!r.cands);const nOk=st.rows.filter(r=>isDone(r)&&!r.skip).length,nCheck=st.rows.filter(r=>!isDone(r)).length,nAdd=st.rows.filter(r=>r.backlog).length;
+  const onList=r=>{const key=norm(r.title||r.read).replace(/[^a-z0-9]+/g,"");return backlog.some(x=>x.shelf===k&&norm(x.title||x.read).replace(/[^a-z0-9]+/g,"")===key)};
   const chip=(act,label,on)=>`<button class="rvchip" data-act="${act}" aria-pressed="${!!on}">${esc(label)}</button>`;
   let n=0;
-  const rowHtml=(r,i)=>{const b=r.id?byId(r.id):null;const pos=r.skip?"–":String(++n);
+  const rowHtml=(r,i)=>{const b=r.id&&!r.backlog?byId(r.id):null;const pos=r.backlog?"+":r.skip?"–":String(++n);
     const elsewhere=b&&isPlaced(b)&&b.shelf!==k?` · now on ${shelfName(b.shelf,true)}`:"";
     const check=!isDone(r);
-    return `<div class="rvrow${check?" check":""}${r.skip?" skipped":""}" data-i="${i}">
-      <div class="rvtop"><span class="rvpos">${pos}</span>${b?`<span class="ochip ${colorCls(b)}"></span>`:""}<span class="otxt"><span class="t">${b?(r.cands&&!r.done?`${esc(b.title)}: which copy?`:esc(b.title)+(r.unsure?"?":"")):`Couldn’t match “${esc(r.read||"?")}”`}</span>
-        <span class="s">${b?(r.cands&&!r.done?`You have ${r.cands.length} copies`:r.unsure&&!r.done?`Spine hard to read${r.read?`: “${esc(r.read)}”`:""}`:`No. ${pad(b.id)}${b.publisher?` · ${esc(b.publisher)}`:""}`)+esc(elsewhere):"Not found in your catalog"}</span></span>${!check&&!r.skip?`<span class="okmark" role="img" aria-label="Matched">✓</span>`:""}</div>
+    return `<div class="rvrow${check?" check":""}${r.skip&&!r.backlog?" skipped":""}${r.backlog?" tolist":""}" data-i="${i}">
+      <div class="rvtop"><span class="rvpos">${pos}</span>${b?`<span class="ochip ${colorCls(b)}"></span>`:""}<span class="otxt"><span class="t">${b?(r.cands&&!r.done?`${esc(b.title)}: which copy?`:esc(b.title)+(r.unsure&&!r.done?"?":"")):`Not in your catalog: ${esc(r.title||r.read||"?")}`}</span>
+        <span class="s">${b?(r.cands&&!r.done?`You have ${r.cands.length} copies`:r.unsure&&!r.done?`Spine hard to read${r.read?`: “${esc(r.read)}”`:""}`:`No. ${pad(b.id)}${b.publisher?` · ${esc(b.publisher)}`:""}`)+esc(elsewhere):esc([r.author,r.read&&r.read!==r.title?`spine: “${r.read}”`:"",r.backlog?(onList(r)?"already on your to-add list":"goes to your to-add list"):""].filter(Boolean).join(" · "))}</span></span>${!check&&!r.skip?`<span class="okmark" role="img" aria-label="Matched">✓</span>`:""}</div>
       ${r.cands?`<div class="rvchips">${r.cands.map(id=>{const c=byId(id);return chip("copy:"+id,`No. ${id}${c&&c.publisher?` · ${c.publisher}`:""}`,!r.skip&&r.id===id)}).join("")}${chip("skip","Not here",r.skip)}</div>`
-        :r.unsure&&b?`<div class="rvchips">${chip("yes","Yes",!r.skip)}${chip("pick","Pick another",false)}${chip("skip","Not mine",r.skip)}</div>`
-        :!b?`<div class="rvchips">${chip("pick","Pick the book",false)}${chip("skip","Skip",r.skip)}</div>`:""}
+        :r.unsure&&b?`<div class="rvchips">${chip("yes","Yes",!r.skip)}${chip("pick","Pick another",false)}${chip("backlog","Not in my catalog",false)}${chip("skip","Skip",r.skip)}</div>`
+        :!b?`<div class="rvchips">${chip("backlog","Add to to-add list",r.backlog)}${chip("pick","It’s in my catalog",false)}${chip("skip","Ignore",r.skip&&!r.backlog)}</div>`:""}
     </div>`};
   const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(shelfName(k))}</div><h2>${st.rows.length} book${st.rows.length===1?"":"s"} found</h2></div><button class="x" data-close aria-label="Close">×</button></div>
-    <div class="rvsum"><span class="pill okp">✓ ${nOk} matched</span>${nCheck?`<span class="pill chk">${nCheck} to check</span>`:""}</div>
+    <div class="rvsum"><span class="pill okp">✓ ${nOk} matched</span>${nCheck?`<span class="pill chk">${nCheck} to check</span>`:""}${nAdd?`<span class="pill addp">${nAdd} not in your catalog</span>`:""}</div>
     ${st.rows.length?`<div class="rvlist">${st.rows.map(rowHtml).join("")}</div>`:`<div class="notice"><span>No spines could be read. Try a straighter, closer photo, or add the books by hand.</span></div>`}
     <p class="small muted center">This photo cost about $${st.cost.toFixed(3)} · ${esc(budgetText())}</p>
-    <div class="actions"><button class="btn" id="rvMissing">+ A book it missed</button><button class="btn primary" id="rvSave" ${st.rows.some(r=>r.id&&!r.skip)?"":"disabled"}>Save this shelf</button></div>`);
+    <div class="actions"><button class="btn" id="rvMissing">+ A book it missed</button><button class="btn primary" id="rvSave" ${st.rows.some(r=>(r.id&&!r.skip)||r.backlog)?"":"disabled"}>Save this shelf</button></div>`);
   s.addEventListener("click",e=>{
     const c=e.target.closest(".rvchip");if(!c)return;const i=+c.closest(".rvrow").dataset.i,r=st.rows[i],act=c.dataset.act;
-    if(act==="skip"){r.skip=true;r.done=true}
+    if(act==="skip"){r.skip=true;r.done=true;r.backlog=false}
+    else if(act==="backlog"){r.skip=true;r.done=true;r.backlog=true;if(!r.title&&!r.author&&r.id){const bb=byId(r.id);r.read=r.read||(bb&&bb.title)||""}r.id=null;r.cands=null}
     else if(act==="yes"){r.skip=false;r.unsure=false;r.done=true}
     else if(act.startsWith("copy:")){const id=+act.slice(5);const other=st.rows.find(x=>x!==r&&x.id===id&&!x.skip);if(other)other.id=r.id;r.id=id;r.skip=false;r.done=true}
-    else if(act==="pick"){openBookPicker({k:null,single:true,onCancel:()=>showReview(k,st)},ids=>{const id=ids[0];st.rows.forEach(x=>{if(x!==r&&x.id===id)x.skip=true});r.id=id;r.cands=null;r.unsure=false;r.skip=false;r.done=true;showReview(k,st)});return}
+    else if(act==="pick"){openBookPicker({k:null,single:true,onCancel:()=>showReview(k,st)},ids=>{const id=ids[0];st.rows.forEach(x=>{if(x!==r&&x.id===id)x.skip=true});r.id=id;r.cands=null;r.unsure=false;r.skip=false;r.done=true;r.backlog=false;showReview(k,st)});return}
     showReview(k,st);
   });
   $("#rvMissing",s).onclick=()=>openBookPicker({k:null,single:true,onCancel:()=>showReview(k,st)},ids=>{const id=ids[0];if(!st.rows.some(x=>x.id===id&&!x.skip))st.rows.push({read:"",id,cands:null,unsure:false,skip:false});showReview(k,st)});
   $("#rvSave",s).onclick=()=>shelfChanges(k,st);
 }
 function shelfChanges(k,st){
-  const fin=[...new Set(st.rows.filter(r=>r.id&&!r.skip).map(r=>r.id))];
+  const fin=[...new Set(st.rows.filter(r=>r.id&&!r.skip&&!r.backlog).map(r=>r.id))];
   const prev=idsOn(k),missing=prev.filter(id=>!fin.includes(id));
   if(!missing.length)return saveShelfPhoto(k,st,fin,prev);
   const comeIn=fin.filter(id=>!prev.includes(id)).map(id=>books.find(b=>b.id===id)).filter(Boolean);
@@ -1435,8 +1444,57 @@ async function saveShelfPhoto(k,st,fin,prev){
   const moves=[{shelf:k,ids,free:st.free,photo:true}];
   const to={};Object.entries(st.fate).forEach(([id,f])=>{if(f.how==="move"&&f.to&&prev.includes(+id)&&!ids.includes(+id))(to[f.to]=to[f.to]||[]).push(+id)});
   Object.entries(to).slice(0,5).forEach(([t,list])=>moves.push({shelf:t,ids:[...idsOn(t,[...ids,...list]),...list]}));
+  const items=[];let left=0;st.rows.forEach(r=>{if(r.id&&!r.skip&&!r.backlog){left=r.id;return}if(r.backlog)items.push({title:r.title||"",author:r.author||"",read:r.read||"",shelf:k,after:left})});
   const btn=$("#chSave")||$("#rvSave");if(btn){btn.disabled=true;btn.textContent="Saving…"}
-  if(await placeMoves(moves,"Shelf saved"))openShelf(k);else if(btn){btn.disabled=false;btn.textContent="Try again"}
+  const ok=ids.length||prev.length?await placeMoves(moves,items.length?"":"Shelf saved"):true;
+  if(!ok){if(btn){btn.disabled=false;btn.textContent="Try again"}return}
+  if(items.length){try{const d=await api("backlog_add",{items:items.slice(0,40)});setBacklog(d.backlog);
+    toast(d.added?`Shelf saved · ${d.added} book${d.added===1?"":"s"} added to your to-add list`:"Shelf saved")}catch(e){handleApiError(e,"Shelf saved, but the to-add list wasn’t")}}
+  openShelf(k);
+}
+
+/* to add: books seen on shelf photos that aren't in the catalog yet */
+async function removeBacklog(id){try{const d=await api("backlog_remove",{id});setBacklog(d.backlog);return true}catch(e){handleApiError(e,"Couldn’t update the list");return false}}
+// Put a book where the spine was seen: right after the book that was on its left.
+function placeAfter(x,id){
+  if(!x.shelf||!shelfOk(x.shelf))return Promise.resolve(true);
+  const ids=idsOn(x.shelf,[id]),i=x.after?ids.indexOf(x.after):-1;
+  ids.splice(!x.after?0:i>=0?i+1:ids.length,0,id);
+  return placeMoves([{shelf:x.shelf,ids}]);
+}
+function openBacklog(){
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">From your shelf photos</div><h2>To add</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    ${backlog.length?`<p class="small muted">Books Claude saw on your shelves that aren’t in your catalog. Add one and it goes straight to the spot where it was seen.</p>
+      <div class="todolist">${backlog.map(x=>`<div class="card todo" data-t="${esc(x.id)}"><div class="todotxt"><b>${esc(x.title||x.read||"Unknown book")}</b>
+        ${x.author||(x.read&&x.read!==x.title)?`<span class="small muted">${esc([x.author,x.read&&x.read!==x.title?`spine: “${x.read}”`:""].filter(Boolean).join(" · "))}</span>`:""}
+        <span class="small muted">${x.shelf&&shelfOk(x.shelf)?`Seen on ${esc(shelfName(x.shelf,true))}`:"Seen on a shelf photo"}${x.seen?` · ${esc(fmtDay(x.seen))}`:""}</span></div>
+        <div class="actions"><button class="btn danger left" data-act="remove">Remove</button><button class="btn" data-act="have">Already in catalog</button><button class="btn primary" data-act="add">Add to catalog</button></div></div>`).join("")}</div>`
+    :`<div class="notice"><strong>All done</strong><span>Nothing left to add.</span></div>`}`);
+  s.addEventListener("click",async e=>{
+    const btn=e.target.closest("[data-act]");if(!btn)return;const x=backlog.find(y=>y.id===btn.closest("[data-t]").dataset.t);if(!x)return;
+    const act=btn.dataset.act;
+    if(act==="remove"){btn.disabled=true;if(await removeBacklog(x.id)){toast("Removed from the list");openBacklog()}else btn.disabled=false}
+    else if(act==="add")addFromBacklog(x);
+    else if(act==="have")openBookPicker({k:null,single:true,onCancel:openBacklog},async ids=>{
+      const b=books.find(y=>y.id===ids[0]);if(!b)return;
+      if(await placeAfter(x,b.id)&&await removeBacklog(x.id))toast(x.shelf&&shelfOk(x.shelf)?`${b.title} placed on ${shelfName(x.shelf,true)}`:"Removed from the list");
+      if(backlog.length)openBacklog();
+    });
+  });
+}
+function addFromBacklog(x){
+  const pre={title:x.title||"",author:x.author||""};
+  const after=async saved=>{const placed=x.shelf&&shelfOk(x.shelf);await placeAfter(x,saved.id);await removeBacklog(x.id);
+    toast(`Added as No. ${pad(saved.id)}${placed?` and placed on ${shelfName(x.shelf,true)}`:""}`)};
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">To add</div><h2>${esc(x.title||x.read||"Add a book")}</h2></div><button class="x" id="afX" aria-label="Close">×</button></div>
+   <div class="choice">
+     ${hasClaude?`<button class="btn primary" id="afCam">${ICON.cam.replace('width="18" height="18"','width="26" height="26"')}<span>Take photos<small>Take the book off the shelf and photograph it. Claude and the barcode fill in the details.</small></span></button>`:""}
+     <button class="btn" id="afType">${ICON.pen}<span>Type it in<small>The title${x.author?" and author":""} Claude read on the spine are filled in for you.</small></span></button>
+   </div>
+   <p class="budgetline">${esc(budgetText())}</p>`);
+  $("#afX",s).onclick=openBacklog;
+  const cam=$("#afCam",s);if(cam)cam.onclick=()=>{closeSheet();openCamera({steps:ADD_STEPS,max:MAX_PHOTOS},r=>openForm(null,r,pre,after))};
+  $("#afType",s).onclick=()=>openForm(null,null,pre,after);
 }
 
 /* ---------- boot ---------- */

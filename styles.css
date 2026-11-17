@@ -483,3 +483,14 @@ body.searching .fab{display:none}
 .tagp.ord{color:var(--reading);background:var(--photo-bg)}
 .cam-frame.full{inset:3% 3%}
 .grow1{flex:1;min-width:0}
+/* to add */
+.pill.addp{background:#ECE6F5;color:#5B3F8A}
+.todohint{margin-bottom:10px}
+.todolist{display:grid;gap:10px}
+.todo{display:grid;gap:10px}
+.todotxt{display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
+.todotxt b{font-size:15px}
+.todo .actions .btn{min-height:40px;padding:0 14px}
+.rvrow{grid-template-columns:minmax(0,1fr)}
+.rvrow.tolist{background:#F6F2FB}
+.rvrow.tolist .rvpos{background:#ECE6F5;color:#5B3F8A}
