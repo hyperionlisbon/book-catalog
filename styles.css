@@ -335,3 +335,37 @@ body.searching .top .wrap{padding-block:10px}
 body.searching .fab{display:none}
 .hiddenhint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--paper);border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:14px}
 .hiddenhint .btn{min-height:38px;font-size:13px}
+
+/* Special editions, signed copies, sprayed edges */
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.chipsep{flex:none;width:1.5px;align-self:stretch;margin:6px 2px;background:var(--line)}
+.chip.mark svg{color:#9A6A12;flex:none}
+.chip.mark[aria-pressed="true"] svg{color:var(--gold)}
+.spine{position:relative}
+.spine .foil{align-self:stretch;flex:none;width:7px;margin:7px -4px 7px -4px;border-inline:2px solid var(--gold);border-radius:1px}
+.spine.light .foil{border-color:#9A6A12}
+.spine .sig{display:inline-flex;vertical-align:-2px;margin-left:8px;color:var(--gold)}
+.spine.light .sig{color:#6B4A00}
+.spine.sprayed{background:linear-gradient(90deg,transparent calc(100% - 5px),rgba(255,255,255,.4) calc(100% - 5px)),var(--sp-bg)}
+.spine.light.sprayed{background:linear-gradient(90deg,transparent calc(100% - 5px),rgba(0,0,0,.22) calc(100% - 5px)),var(--sp-bg)}
+.hero .ribbons{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:6px;justify-items:end;max-width:calc(100% - 92px)}
+.hero .ribbon{display:inline-flex;align-items:center;gap:6px;background:var(--gold);color:#2A1E07;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:6px 12px 6px 10px;border-radius:4px 0 0 4px;box-shadow:0 4px 10px rgba(40,25,10,.3);clip-path:polygon(0 0,100% 0,calc(100% - 8px) 50%,100% 100%,0 100%);padding-right:18px;overflow-wrap:anywhere}
+.hero .ribbon svg{flex:none}
+.band .pill.edge{background:transparent;color:inherit;border:1px solid currentColor}
+.f.marks{grid-column:1/-1}
+.markrow{display:flex;flex-wrap:wrap;gap:8px}
+.marktog,.sigsel{min-height:42px;border:1.5px solid var(--line);background:transparent;border-radius:21px;padding:0 14px;font-size:.9rem;display:inline-flex;align-items:center;gap:7px;color:var(--ink)}
+.marktog svg,.sigsel svg{color:#9A6A12;flex:none}
+.marktog[aria-pressed="true"],.sigsel.on{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:600}
+.marktog[aria-pressed="true"] svg,.sigsel.on svg{color:var(--gold)}
+.f .sigsel{font-size:.9rem;color:var(--ink);flex-wrap:nowrap;padding-right:6px}
+.f .sigsel.on{color:var(--paper)}
+.f .sigsel select{border:0;background:transparent;color:inherit;font:inherit;padding:8px 4px;width:auto}
+.f .sigsel select:focus{border:0}
+.sigsel:focus-within{outline:2px solid var(--ink);outline-offset:2px}
+.tile.treasure .k{display:flex;align-items:center;gap:6px}
+.tile.treasure .k svg{color:#9A6A12}
+.vcard > .tiles + .btn{margin-top:10px}
+.f .sigsel select option{color:#1E2420;background:#fff}
+.vcard .tile.treasure{background:var(--wall)}
+.vcard .btn{white-space:normal;max-width:100%;height:auto;min-height:40px;padding-block:8px;text-align:center}

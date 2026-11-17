@@ -9,6 +9,39 @@
     if (!y || y < 1000) return null;
     return y < 1950 ? 'Before 1950' : (Math.floor(y / 10) * 10) + 's';
   };
+
+  // Special editions and signed copies live in the "Special edition details" text; these read and write them there.
+  const SIGNED_RE = /\bsigned\b|assinad|autografad|autographed/i;
+  const PLATE_RE = /bookplate|book plate|signed plate|ex.?libris/i;
+  const PERSONAL_RE = /personali[sz]|inscribed|dedicated to|dedicad|for me\b/i;
+  const SPECIAL_RE = /special|deluxe|collector|anniversary|limited|illustrat|ilustr|pop.?ups?\b|minalima|exclusive|numbered|slipcase|\bedition\b|edi[cç][aã]o/i;
+  const SPRAYED_RE = /sprayed|painted edges|stencil|gilded|gilt edges|foiled edges|decorated edges/i;
+  const SIGNED_TYPES = ['Signed', 'Signed & personalised', 'Signed bookplate'];
+  const segsOf = t => String(t || '').split(/[,;]/).map(x => x.trim()).filter(Boolean);
+  function marksOf(text) {
+    const segs = segsOf(text);
+    const sseg = segs.find(x => SIGNED_RE.test(x));
+    const signed = !sseg ? '' : PLATE_RE.test(sseg) ? SIGNED_TYPES[2] : PERSONAL_RE.test(sseg) ? SIGNED_TYPES[1] : SIGNED_TYPES[0];
+    const specialSeg = segs.find(x => !SIGNED_RE.test(x) && SPECIAL_RE.test(x)) || '';
+    return { special: !!specialSeg, specialSeg, signed, sprayed: SPRAYED_RE.test(String(text || '')) };
+  }
+  // change = {special?: bool, signed?: '' | one of SIGNED_TYPES}; the rest of the text is kept as it is.
+  function applyMarks(text, change) {
+    let segs = segsOf(text);
+    const lead = [];
+    if ('signed' in change) {
+      segs = segs.filter(x => !SIGNED_RE.test(x));
+      if (change.signed) lead.push(SIGNED_TYPES.includes(change.signed) ? change.signed : 'Signed');
+    } else {
+      const s = segs.filter(x => SIGNED_RE.test(x)); segs = segs.filter(x => !SIGNED_RE.test(x)); lead.push(...s);
+    }
+    if ('special' in change) {
+      if (!change.special) segs = segs.filter(x => !SPECIAL_RE.test(x));
+      else if (!segs.some(x => SPECIAL_RE.test(x))) lead.push('Special edition');
+    }
+    return lead.concat(segs).join(', ');
+  }
+
   function tally(list, keyFn) {
     const m = new Map();
     list.forEach(b => { const k = keyFn(b); if (k === null || k === undefined || k === '') return; m.set(k, (m.get(k) || 0) + 1); });
@@ -109,9 +142,15 @@
       noLocation: books.filter(b => !b.location).length,
       withPhoto: books.filter(b => b.hasPhoto).length,
       missing: missingVolumes(books),
+      marks: (() => {
+        const m = books.map(b => [b, marksOf(b.special)]);
+        const pick = f => m.filter(x => f(x[1])).map(x => x[0]);
+        return { special: pick(x => x.special), signed: pick(x => x.signed), sprayed: pick(x => x.sprayed),
+          signedTypes: SIGNED_TYPES.map(t => ({ key: t, value: m.filter(x => x[1].signed === t).length })) };
+      })(),
       copies: (() => { const g = copyGroups(books); return { top: g.slice(0, 5), groups: g.length, extra: g.reduce((s, x) => s + x.value - 1, 0) }; })()
     };
   }
 
-  root.BCStats = { compute, yearOf, decadeKey, STATUS_ORDER, workTitle, workKey, copyGroups, suggestCopies, missingVolumes, normT };
+  root.BCStats = { compute, yearOf, decadeKey, STATUS_ORDER, workTitle, workKey, copyGroups, suggestCopies, missingVolumes, normT, marksOf, applyMarks, SIGNED_TYPES };
 })(typeof window !== 'undefined' ? window : globalThis);

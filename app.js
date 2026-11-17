@@ -37,6 +37,8 @@ const ICON={
   back:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`,
   award:`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9 13.5 8 21l4-2 4 2-1-7.5"/></svg>`,
   scan:`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>`,
+  sig:`<svg width="22" height="14" viewBox="0 0 30 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 14c3-1 5-9 7-9s-1 9 1 9 3-6 5-6-1 5 1 5 3-3 5-3 2 2 7 1"/></svg>`,
+  star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
 let toastT;
@@ -47,9 +49,11 @@ let conn=store.get("bc-conn",null);
 let books=store.get("bc-books",[]);
 let budget=store.get("bc-budget",null);
 let hasClaude=store.get("bc-claude",false);
-const st={q:"",status:"",genre:"",lang:"",sort:"id-desc",shown:60,...store.get("bc-view",{})};
+const st={q:"",status:"",mark:"",genre:"",lang:"",sort:"id-desc",shown:60,...store.get("bc-view",{})};
 st.q="";st.shown=60;
-const saveView=()=>store.set("bc-view",{status:st.status,genre:st.genre,lang:st.lang,sort:st.sort});
+const saveView=()=>store.set("bc-view",{status:st.status,mark:st.mark,genre:st.genre,lang:st.lang,sort:st.sort});
+const marksOf=b=>window.BCStats.marksOf(b.special);
+const MARKS={special:{label:"Special",test:m=>m.special},signed:{label:"Signed",test:m=>!!m.signed}};
 const photoCache=new Map(); // book id -> object URL (this visit only)
 
 /* ---------- backend ---------- */
@@ -92,7 +96,8 @@ function searchScore(b,q){
   const content=terms.filter(t=>!STOPWORDS.has(t));if(content.length)terms=content;
   const title=norm(b.title), tw=wordsOf(b.title);
   const pw=wordsOf([b.title,b.author,b.series,b.publisher,b.location].join(" "));
-  const ew=wordsOf([b.genre,b.subgenre].join(" "));
+  const mk=marksOf(b);
+  const ew=wordsOf([b.genre,b.subgenre,b.special,mk.special?"special edition":"",mk.signed].join(" "));
   const vols=String(b.seriesNo??"").split(/[,;&]/).map(x=>parseInt(x,10)).filter(n=>n>0);
   const isbns=String(b.isbn||"").replace(/[^0-9Xx,; ]/g,"").split(/[,;\s]+/).filter(Boolean);
   const qWords=q.replace(/[^a-z0-9 ]/g," ").trim().replace(/\s+/g," ");
@@ -115,7 +120,7 @@ function searchScore(b,q){
 }
 function filtered(){
   const q=norm(st.q).trim();
-  let r=books.filter(b=>(st.status?b.status===st.status:owned(b))&&(!st.genre||b.genre===st.genre)&&(!st.lang||b.language===st.lang));
+  let r=books.filter(b=>(st.status?b.status===st.status:owned(b))&&(!st.mark||!MARKS[st.mark]||MARKS[st.mark].test(marksOf(b)))&&(!st.genre||b.genre===st.genre)&&(!st.lang||b.language===st.lang));
   const by=f=>(a,b)=>norm(f(a)).localeCompare(norm(f(b)));
   const sorters={"id-desc":(a,b)=>b.id-a.id,"id-asc":(a,b)=>a.id-b.id,title:by(b=>b.title),author:by(b=>b.author),
     rating:(a,b)=>(+b.rating||0)-(+a.rating||0)||a.id-b.id,
@@ -130,7 +135,9 @@ function renderChrome(){
   const nOwned=books.filter(owned).length;
   $("#tally").innerHTML=books.length?`<span><b>${nOwned}</b>books</span><span class="s-read"><b>${counts.Read||0}</b>read</span><span class="s-tbr"><b>${counts.TBR||0}</b>to read</span>`:"";
   $("#statusChips").innerHTML=[["","All",nOwned],...STATUSES.map(s=>[s,statusLabel(s),counts[s]||0])]
-    .map(([v,l,n])=>`<button class="chip" data-status="${esc(v)}" aria-pressed="${st.status===v}">${esc(l)}<span class="n">${n}</span></button>`).join("");
+    .map(([v,l,n])=>`<button class="chip" data-status="${esc(v)}" aria-pressed="${st.status===v}">${esc(l)}<span class="n">${n}</span></button>`).join("")
+    +`<span class="chipsep" aria-hidden="true"></span>`+Object.entries(MARKS).map(([k,m])=>{const n=books.filter(b=>owned(b)&&m.test(marksOf(b))).length;
+      return `<button class="chip mark" data-mark="${k}" aria-pressed="${st.mark===k}">${k==="special"?ICON.star:ICON.sig}${m.label}<span class="n">${n}</span></button>`}).join("");
   const uniq=k=>[...new Set(books.map(b=>b[k]).filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b));
   const fill=(sel,vals,label,cur)=>{const el=$(sel);el.innerHTML=`<option value="">${label}</option>`+vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");el.value=vals.includes(cur)?cur:""};
   fill("#fGenre",uniq("genre"),"All genres",st.genre);
@@ -149,8 +156,10 @@ function spineHtml(b){
   const series=b.series?` · ${esc(b.series)}${b.seriesNo!==""&&b.seriesNo!=null?` #${esc(b.seriesNo)}`:""}`:"";
   const side=b.status==="Wishlist"?`<span class="tag wish">Wishlist</span>`:b.priority&&b.status!=="Read"?`<span class="tag prio">Priority</span>`
     :(+b.rating?stars(b.rating):(b.status?`<span class="tag">${esc(statusLabel(b.status))}</span>`:""));
-  return `<button class="spine ${sp.cls}" data-id="${+b.id}"><span class="no">${pad(+b.id)}</span>
-    <span class="txt"><span class="t">${esc(b.title)}</span><span class="a">${esc(b.author)}${series}${nCopies>1?` · ${nCopies} copies`:""}</span></span>${side}</button>`;
+  const mk=marksOf(b);
+  const label=[mk.special?"special edition":"",mk.signed?mk.signed.toLowerCase():""].filter(Boolean).join(", ");
+  return `<button class="spine ${sp.cls}${mk.special?" special":""}${mk.sprayed?" sprayed":""}" data-id="${+b.id}"${label?` aria-label="${esc(b.title)}, ${esc(label)}"`:""}>${mk.special?`<span class="foil" aria-hidden="true"></span>`:""}<span class="no">${pad(+b.id)}</span>
+    <span class="txt"><span class="t">${esc(b.title)}${mk.signed?`<span class="sig" title="${esc(mk.signed)}">${ICON.sig}</span>`:""}</span><span class="a">${esc(b.author)}${series}${nCopies>1?` · ${nCopies} copies`:""}</span></span>${side}</button>`;
 }
 function renderList(){
   const list=$("#list");
@@ -162,11 +171,11 @@ function renderList(){
   const r=filtered();
   // A search inside one list (e.g. "Read") can hide the book you're looking for: say so, with a way out.
   let hidden=0;
-  if(st.q.trim()&&(st.status||st.genre||st.lang)){const keep={...st};Object.assign(st,{status:"",genre:"",lang:""});
-    const all=filtered().filter(b=>owned(b)||keep.status==="Wishlist"||b.status==="Wishlist");Object.assign(st,{status:keep.status,genre:keep.genre,lang:keep.lang});
+  if(st.q.trim()&&(st.status||st.mark||st.genre||st.lang)){const keep={...st};Object.assign(st,{status:"",mark:"",genre:"",lang:""});
+    const all=filtered().filter(b=>owned(b)||keep.status==="Wishlist"||b.status==="Wishlist");Object.assign(st,{status:keep.status,mark:keep.mark,genre:keep.genre,lang:keep.lang});
     hidden=all.filter(b=>!r.includes(b)).length}
   const hint=hidden?`<div class="hiddenhint"><span>${hidden} more match${hidden===1?"es":""} outside your filters</span><button class="btn" id="showAll">Search all books</button></div>`:"";
-  const wire=()=>{const x=$("#showAll");if(x)x.onclick=()=>{st.status="";st.genre="";st.lang="";saveView();render()}};
+  const wire=()=>{const x=$("#showAll");if(x)x.onclick=()=>{st.status="";st.mark="";st.genre="";st.lang="";saveView();render()}};
   if(!r.length){list.innerHTML=`<div class="notice"><strong>No books match</strong><span>${hidden?"":"Try a different search or clear the filters."}</span>${hint}</div>`;$("#moreWrap").hidden=true;wire();return}
   list.innerHTML=`${hint}<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;wire();
   $("#moreWrap").hidden=r.length<=st.shown;
@@ -176,7 +185,8 @@ function render(){refreshWorkCount();renderChrome();renderList();const sv=$(".st
 
 // While there is text in the search box, the header shrinks to the search row, so results stay visible above the phone keyboard.
 $("#q").addEventListener("input",e=>{st.q=e.target.value;st.shown=60;document.body.classList.toggle("searching",!!st.q.trim());renderList();window.scrollTo(0,0)});
-$("#statusChips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;st.status=c.dataset.status;st.shown=60;saveView();render()});
+$("#statusChips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;
+  if(c.dataset.mark)st.mark=st.mark===c.dataset.mark?"":c.dataset.mark;else st.status=c.dataset.status;st.shown=60;saveView();render()});
 $("#fGenre").addEventListener("change",e=>{st.genre=e.target.value;st.shown=60;saveView();renderList()});
 $("#fLang").addEventListener("change",e=>{st.lang=e.target.value;st.shown=60;saveView();renderList()});
 $("#fSort").addEventListener("change",e=>{st.sort=e.target.value;saveView();renderList()});
@@ -256,6 +266,11 @@ async function photoUrl(b){
 }
 function setCachedPhoto(id,blob){if(photoCache.has(id))URL.revokeObjectURL(photoCache.get(id));photoCache.set(id,URL.createObjectURL(blob))}
 
+function ribbonsHtml(b){
+  const mk=marksOf(b);if(!mk.special&&!mk.signed)return "";
+  const sp=mk.special?(/edition/i.test(mk.specialSeg)&&mk.specialSeg.length<=34?mk.specialSeg:"Special edition"):"";
+  return `<div class="ribbons">${sp?`<span class="ribbon">${ICON.star}${esc(sp)}</span>`:""}${mk.signed?`<span class="ribbon">${ICON.sig}${esc(mk.signed)}</span>`:""}</div>`;
+}
 function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   closeBook();
@@ -266,6 +281,7 @@ function openBook(id){
     <div class="hero" id="hero">
       <div class="loading" id="heroInner">${b.hasPhoto?"Loading photo…":""}</div>
       <button class="over back" id="bkBack" aria-label="Back to shelves">${ICON.back}</button>
+      ${ribbonsHtml(b)}
       <button class="over retake" id="bkPhoto">${ICON.cam}${b.hasPhoto?"Retake photo":"Add photo"}</button>
     </div>
     <div class="band ${sp.light?"light":""}">
@@ -273,7 +289,7 @@ function openBook(id){
       <h1>${esc(b.title)}</h1>
       <div class="by">${esc(b.author)}${b.series?` · ${esc(b.series)}${b.seriesNo!==""?` #${esc(b.seriesNo)}`:""}`:""}</div>
       ${readBarHtml(b)}
-      <div class="row start"><span class="pill">${esc(statusLabel(b.status||"TBR"))}</span>${b.priority?`<span class="pill prio">High priority</span>`:""}${b.dateRead&&b.dateRead!=="Not registered"?`<span class="by">Read ${esc(b.dateRead)}</span>`:""}</div>
+      <div class="row start"><span class="pill">${esc(statusLabel(b.status||"TBR"))}</span>${b.priority?`<span class="pill prio">High priority</span>`:""}${marksOf(b).sprayed?`<span class="pill edge">Sprayed edges</span>`:""}${b.dateRead&&b.dateRead!=="Not registered"?`<span class="by">Read ${esc(b.dateRead)}</span>`:""}</div>
     </div>
     <div class="book-body">
       ${b.comments?`<p class="quote">“${esc(b.comments)}”</p>`:""}
@@ -716,6 +732,10 @@ function openForm(b,capture,pre){
      ${inp("editionYear","Edition year","t",'inputmode="numeric"')}
      ${inp("language","Language","t",'list="dl-language"')}
      ${inp("special","Special edition details","",'list="dl-special" placeholder="Sprayed edges, dust jacket, folded cover…"')}
+     <div class="f marks"><span class="lbl">Highlight this copy</span><div class="markrow">
+       <button type="button" class="marktog" id="mkSpecial" aria-pressed="false">${ICON.star}Special edition</button>
+       <label class="sigsel">${ICON.sig}<span class="vh">Signed</span><select id="mkSigned" aria-label="Signed"><option value="">Not signed</option>${window.BCStats.SIGNED_TYPES.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label>
+     </div></div>
     </div></fieldset>
     <fieldset class="fs"><legend>About the work</legend><div class="grid">
      ${inp("firstPublisher","First edition publisher","h full-sm",'list="dl-publisher"')}
@@ -738,6 +758,13 @@ function openForm(b,capture,pre){
    <div id="dupArea"></div>
    <div class="actions"><span class="small left" id="formStatus"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="saveBtn">${isNew?"Add to shelf":"Save changes"}</button></div>`);
   $("#i-cover",s).value=v.cover||"";
+  // The two highlight controls read and write the "Special edition details" text, so the Sheet stays readable.
+  const spIn=$("#i-special",s), mkSp=$("#mkSpecial",s), mkSg=$("#mkSigned",s);
+  const syncMarks=()=>{const m=window.BCStats.marksOf(spIn.value);mkSp.setAttribute("aria-pressed",String(m.special));mkSg.value=m.signed;mkSg.closest(".sigsel").classList.toggle("on",!!m.signed)};
+  const setMarks=ch=>{spIn.value=window.BCStats.applyMarks(spIn.value,ch);spIn.dispatchEvent(new Event("input",{bubbles:true}));syncMarks()};
+  mkSp.onclick=()=>setMarks({special:mkSp.getAttribute("aria-pressed")!=="true"});
+  mkSg.onchange=()=>setMarks({signed:mkSg.value});
+  spIn.addEventListener("input",syncMarks);syncMarks();
   $("#i-priority",s).value=v.priority==="High"?"High":"";
   let status=v.status||"TBR", rating=+v.rating||0;
   $("#segStatus",s).onclick=e=>{const btn=e.target.closest("button");if(!btn)return;status=btn.dataset.v;$$("#segStatus button",s).forEach(x=>x.setAttribute("aria-pressed",String(x===btn)))};
@@ -953,6 +980,12 @@ function renderStats(v){
        return `<button class="prow ${x.read===x.owned?"done":""}" data-d="${id}"><span class="top"><span>${esc(x.key)}</span><span>${x.read} of ${x.owned} read</span></span><span class="trk"><span class="fill" data-w="${(100*x.read/x.owned).toFixed(1)}"></span></span></button>`}).join("")}</div></section>`:""}
    <section class="vcard"><h2>Most copies</h2>${S.copies.groups?`<p class="sub">${S.copies.groups} book${S.copies.groups===1?" has":"s have"} more than one copy · ${S.copies.extra} extra cop${S.copies.extra===1?"y":"ies"}</p>${(()=>{const max=Math.max(...S.copies.top.map(x=>x.value));return `<div class="hbars">${S.copies.top.map(x=>{const id=reg(`Copies: ${x.label}`,x.books);return `<button class="hrow" data-d="${id}"><span class="lab">${esc(x.label)}</span><span class="trk"><span class="fill" data-w="${(100*x.value/max).toFixed(1)}"></span></span><span class="num">${x.value}</span></button>`}).join("")}</div>`})()}`:`<p class="vnote">No copies linked yet.</p>`}
      ${sugCount?`<button class="btn" id="stSugg">${sugCount} possible group${sugCount===1?"":"s"} of copies found: review</button>`:""}</section>
+   <section class="vcard"><h2>Special &amp; signed</h2><p class="sub">The treasures on your shelves</p>
+     <div class="tiles">
+       <button class="tile treasure" data-d="${reg(T("Special editions"),S.marks.special)}"><span class="k">${ICON.star}Special editions</span><span class="v">${S.marks.special.length}</span><span class="s">${pct(S.marks.special.length,S.total)}% of your books</span></button>
+       <button class="tile treasure" data-d="${reg(T("Signed copies"),S.marks.signed)}"><span class="k">${ICON.sig}Signed</span><span class="v">${S.marks.signed.length}</span><span class="s">${S.marks.signedTypes.filter(x=>x.value).map(x=>`${x.value} ${x.key==="Signed"?"signed":x.key==="Signed bookplate"?"bookplate":"personalised"}`).join(" · ")||"none yet"}</span></button>
+     </div>
+     ${S.marks.sprayed.length?`<button class="btn" data-d="${reg(T("Sprayed edges"),S.marks.sprayed)}">${S.marks.sprayed.length} with sprayed edges</button>`:""}</section>
    <section class="vcard"><h2>Top authors</h2><p class="sub">By books you own</p>${hbars(S.authors,"Author",(b,x)=>b.author===x.key)}</section>
    <section class="vcard"><h2>The collection</h2><div class="twocol">
      <div class="mini"><h3>Language</h3>${segbar(S.languages.slice(0,4),"Language",b=>b.language,x=>String(x.key))}</div>
