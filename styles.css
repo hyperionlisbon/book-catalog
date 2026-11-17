@@ -369,3 +369,9 @@ body.searching .fab{display:none}
 .f .sigsel select option{color:#1E2420;background:#fff}
 .vcard .tile.treasure{background:var(--wall)}
 .vcard .btn{white-space:normal;max-width:100%;height:auto;min-height:40px;padding-block:8px;text-align:center}
+/* First edition found online */
+:root{--web:#5B3F8A;--web-bg:#ECE6F5}
+.badge.online{color:var(--web);background:var(--web-bg)}
+.f.src-online input,.f.src-online select{border-color:var(--web);background:var(--web-bg)}
+.f.firstrow{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.f.firstrow .small{color:var(--muted);font-size:.82rem;min-width:0;overflow-wrap:anywhere}

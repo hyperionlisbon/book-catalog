@@ -697,9 +697,76 @@ async function lookupIsbn(isbn){
   return null;
 }
 
+/* ---------- first edition, from the internet (free: Wikidata + Open Library) ---------- */
+async function getJson(url,ms=9000){
+  const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);
+  try{const r=await fetch(url,{credentials:"omit",referrerPolicy:"no-referrer",signal:c.signal});return r.ok?await r.json():null}catch(e){return null}finally{clearTimeout(t)}
+}
+const yearIn=s=>{const m=String(s??"").match(/\b(1[0-9]{3}|20[0-9]{2})\b/);return m?+m[1]:0};
+const nameWords=s=>norm(s).split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+const sameAuthor=(label,author)=>{const a=nameWords(author);if(!a.length)return true;const l=nameWords(label);return a.some(w=>l.includes(w))};
+// "Os Pilares da Terra (The Pillars of the Earth)" → try the original title first, then the title as written.
+function titleVariants(t){
+  t=String(t||"").trim();const inner=(t.match(/\(([^()]{3,})\)?\s*$/)||[])[1];const main=t.replace(/\s*\(.*$/,"").trim();
+  return [...new Set([inner&&inner.trim(),main].filter(Boolean))].slice(0,2);
+}
+async function wikidataFirst(title,author){
+  for(const q of titleVariants(title)){
+    const lit=q.replace(/[\\"]/g,"\\$&").replace(/\s+/g," ").slice(0,150);
+    const sparql=`SELECT ?item ?date ?pubLabel ?authorLabel WHERE {
+      SERVICE wikibase:mwapi { bd:serviceParam wikibase:endpoint "www.wikidata.org"; wikibase:api "EntitySearch"; mwapi:search "${lit}"; mwapi:language "en". ?item wikibase:apiOutputItem mwapi:item. }
+      ?item wdt:P50 ?author.
+      FILTER NOT EXISTS { ?item wdt:P31 wd:Q3331189 }
+      OPTIONAL { ?item wdt:P577 ?date } OPTIONAL { ?item wdt:P123 ?pub }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,pt,mul". }
+    } LIMIT 60`;
+    const j=await getJson("https://query.wikidata.org/sparql?format=json&query="+encodeURIComponent(sparql));
+    const rows=(j&&j.results&&j.results.bindings)||[];
+    const items=new Map();
+    for(const r of rows){
+      const v=k=>r[k]&&r[k].value||"";
+      if(!sameAuthor(v("authorLabel"),author))continue;
+      const it=items.get(v("item"))||{year:0,pubs:new Set()};
+      const y=yearIn(v("date"));if(y&&(!it.year||y<it.year))it.year=y;
+      const pub=v("pubLabel");if(pub&&!/^Q\d+$/.test(pub))it.pubs.add(pub);
+      items.set(v("item"),it);
+    }
+    const best=[...items.values()].filter(x=>x.year||x.pubs.size).sort((a,b)=>(a.year||9999)-(b.year||9999))[0];
+    if(best)return {year:best.year||0,publisher:[...best.pubs].slice(0,2).join(" and "),source:"Wikidata"};
+  }
+  return null;
+}
+async function openLibraryFirst(isbn,title,author){
+  const F="fields=key,title,first_publish_year,author_name&limit=5";
+  let doc=null;
+  if(isbn){const j=await getJson(`https://openlibrary.org/search.json?q=isbn:${isbn}&${F}`);doc=j&&j.docs&&j.docs[0]||null}
+  if(!doc)for(const t of titleVariants(title)){
+    const j=await getJson(`https://openlibrary.org/search.json?title=${encodeURIComponent(t)}${author?`&author=${encodeURIComponent(author)}`:""}&${F}`);
+    doc=(j&&j.docs||[]).find(d=>sameAuthor((d.author_name||[]).join(" "),author)&&d.first_publish_year)||null;if(doc)break;
+  }
+  if(!doc||!/^\/works\/OL\d+W$/.test(doc.key||""))return null;
+  const year=+doc.first_publish_year||0;let publisher="";
+  const e=await getJson(`https://openlibrary.org${doc.key}/editions.json?limit=100`);
+  const eds=((e&&e.entries)||[]).map(x=>({y:yearIn(x.publish_date),p:(x.publishers||[])[0]||""})).filter(x=>x.y&&x.p);
+  if(eds.length){
+    const target=year&&eds.some(x=>x.y===year)?year:Math.min(...eds.map(x=>x.y));
+    const n=new Map();eds.filter(x=>x.y===target).forEach(x=>n.set(x.p,(n.get(x.p)||0)+1));
+    if(!year||target===year)publisher=[...n.entries()].sort((a,b)=>b[1]-a[1])[0][0];
+  }
+  return (year||publisher)?{year,publisher,source:"Open Library"}:null;
+}
+// Wikidata knows the original publisher of well-known books; Open Library covers far more titles. Wikidata wins when both answer.
+async function findFirstEdition({title,author,isbn}){
+  const [wd,ol]=await Promise.all([wikidataFirst(title,author).catch(()=>null),openLibraryFirst(isbn,title,author).catch(()=>null)]);
+  const year=(wd&&wd.year)||(ol&&ol.year)||0, publisher=(wd&&wd.publisher)||(ol&&ol.publisher)||"";
+  if(!year&&!publisher)return null;
+  const src=[...new Set([wd&&(wd.year||wd.publisher)?"Wikidata":"",ol&&((!(wd&&wd.year)&&ol.year)||(!(wd&&wd.publisher)&&ol.publisher))?"Open Library":""].filter(Boolean))];
+  return {firstYear:year?String(year):"",firstPublisher:String(publisher).slice(0,200),source:src.join(" + ")};
+}
+
 /* ---------- form ---------- */
-const RANK={photo:3,catalog:2,knowledge:1};
-const BADGE={photo:"photo",catalog:"catalog",knowledge:"check"};
+const RANK={photo:3,catalog:2,online:2,knowledge:1};
+const BADGE={photo:"photo",catalog:"catalog",online:"online",knowledge:"check"};
 function findDupe(r,selfId){
   const mine=isbnDigits(r.isbn);
   return books.find(b=>b.id!==selfId&&((mine.length&&isbnDigits(b.isbn).some(x=>mine.includes(x)))||(norm(b.title)&&norm(b.title)===norm(r.title)&&norm(b.author)===norm(r.author)&&norm(b.language)===norm(r.language))));
@@ -717,7 +784,7 @@ function openForm(b,capture,pre){
      <div class="sectlabel">Your photos · tap one to make it the book’s photo</div>
      <div class="thumbs" id="thumbs">${photos.map((p,i)=>`<button type="button" class="thumb" data-i="${i}" aria-pressed="${i===0}" aria-label="Use photo ${i+1} as the book’s photo"><img src="${p.url}" alt=""><span class="lbl" ${i===0?"":"hidden"}>Cover</span></button>`).join("")}</div>
      <div class="progress" id="prog"></div>
-     <div class="legend"><span><span class="badge photo">photo</span> read from your photos</span><span><span class="badge catalog">catalog</span> from the ISBN</span><span><span class="badge knowledge">check</span> Claude’s suggestion</span></div>
+     <div class="legend"><span><span class="badge photo">photo</span> read from your photos</span><span><span class="badge catalog">catalog</span> from the ISBN</span><span><span class="badge online">online</span> found on the internet</span><span><span class="badge knowledge">check</span> Claude’s suggestion</span></div>
      <p class="budgetline" id="budgetLine">${esc(budgetText())}</p>
    </section>`:""}
    <form id="bookForm" novalidate>
@@ -738,6 +805,7 @@ function openForm(b,capture,pre){
      </div></div>
     </div></fieldset>
     <fieldset class="fs"><legend>About the work</legend><div class="grid">
+     <div class="f firstrow"><button type="button" class="btn" id="firstBtn">Find 1st edition online</button><span class="small" id="firstStatus" role="status"></span></div>
      ${inp("firstPublisher","First edition publisher","h full-sm",'list="dl-publisher"')}
      ${inp("firstYear","First edition year","t",'inputmode="numeric"')}
      ${inp("genre","Genre","t",'list="dl-genre"')}
@@ -774,7 +842,7 @@ function openForm(b,capture,pre){
     $$(".thumb",thumbs).forEach(x=>{const on=+x.dataset.i===coverIdx;x.setAttribute("aria-pressed",String(on));$(".lbl",x).hidden=!on})};
 
   const dirty=new Set(), rank={};
-  $$(".f[data-f] input,.f[data-f] select",s).forEach(el=>el.addEventListener("input",()=>{const f=el.closest(".f");dirty.add(f.dataset.f);f.classList.remove("src-photo","src-catalog","src-knowledge");$(".src",f).innerHTML=""}));
+  $$(".f[data-f] input,.f[data-f] select",s).forEach(el=>el.addEventListener("input",()=>{const f=el.closest(".f");dirty.add(f.dataset.f);f.classList.remove("src-photo","src-catalog","src-online","src-knowledge");$(".src",f).innerHTML=""}));
   const apply=(k,val,src)=>{
     if(val==null||val==="")return;val=String(val).trim();if(!val)return;
     const f=$(`.f[data-f="${k}"]`,s);if(!f||dirty.has(k))return;
@@ -782,7 +850,7 @@ function openForm(b,capture,pre){
     const el=$("input,select",f);
     if(el.tagName==="SELECT"&&![...el.options].some(o=>o.value===val))return;
     el.value=val;rank[k]=RANK[src];
-    f.classList.remove("src-photo","src-catalog","src-knowledge");f.classList.add("src-"+src);
+    f.classList.remove("src-photo","src-catalog","src-online","src-knowledge");f.classList.add("src-"+src);
     $(".src",f).innerHTML=`<span class="badge ${src}">${BADGE[src]}</span>`;
   };
   const prog=$("#prog",s);
@@ -795,7 +863,32 @@ function openForm(b,capture,pre){
     const c=await lookupIsbn(d);
     if(c){["title","author","publisher","editionYear","language","isbn"].forEach(k=>apply(k,c[k],"catalog"));setProg("cat","ok",`Found in the free book catalogs (ISBN ${d})`)}
     else setProg("cat","err",`ISBN ${d} isn’t in the free catalogs`);
+    if(isNew)runFirst(true);
   };
+  // First edition year and publisher: what the photos show wins; otherwise it's looked up online (free).
+  let firstKey="",firstSeq=0;
+  const runFirst=async auto=>{
+    const val=k=>($(`#i-${k}`,s)||{}).value?.trim()||"";
+    const title=val("title"),author=val("author"),isbn=isbnDigits(val("isbn"))[0]||"";
+    const fst=$("#firstStatus",s);
+    if(!title&&!isbn){if(!auto)fst.textContent="Add the title (or ISBN) first.";return}
+    // Fill only what's empty or just a guess; never touch what you typed or what the photos show.
+    const open=k=>!dirty.has(k)&&(rank[k]?rank[k]<RANK.online:!val(k));
+    const need=["firstYear","firstPublisher"].filter(open);
+    if(auto&&!need.length)return;
+    const key=[title,author,isbn].join("|");if(auto&&key===firstKey)return;firstKey=key;
+    const seq=++firstSeq;
+    fst.textContent="Looking up the first edition online…";setProg("first","busy","Looking up the first edition online…");
+    const r=await findFirstEdition({title,author,isbn});
+    if(seq!==firstSeq||!s.isConnected)return;
+    if(!r){fst.textContent="Not found online. Fill it in by hand if you know it.";setProg("first","err","First edition not found online");return}
+    const filled=["firstYear","firstPublisher"].filter(k=>open(k)&&r[k]);filled.forEach(k=>apply(k,r[k],"online"));
+    const what=[r.firstYear,r.firstPublisher].filter(Boolean).join(", ");
+    fst.textContent=`Found online (${r.source}): ${what}${!filled.length?" · your values were kept":filled.length<2&&need.length<2?" · only the empty field was filled":""}`;
+    setProg("first","ok",`First edition found online (${r.source}): ${what}`);
+  };
+  $("#firstBtn",s).onclick=()=>runFirst(false);
+  if(isNew){let t;["title","author"].forEach(k=>$(`#i-${k}`,s).addEventListener("change",()=>{clearTimeout(t);t=setTimeout(()=>runFirst(true),300)}))}
   $("#lookupBtn",s).onclick=async e=>{
     const d=isbnDigits($("#i-isbn",s).value)[0];const fs=$("#formStatus",s);
     if(!d){fs.textContent="Type a 10- or 13-digit ISBN first.";return}
@@ -819,7 +912,7 @@ function openForm(b,capture,pre){
         Object.keys(r).forEach(k=>{if(k!=="from")apply(k,r[k],from[k]==="photo"?"photo":"knowledge")});
         if(d.budget){budget=d.budget;store.set("bc-budget",budget);const bl=$("#budgetLine",s);if(bl)bl.textContent=budgetText()}
         setProg("ai","ok",`Claude read the photos${d.costUsd?` (cost about $${(+d.costUsd).toFixed(3)})`:""}. Check the highlighted fields.`);
-        if(r.isbn&&!lookedUp)runLookup(isbnDigits(r.isbn)[0]);
+        if(r.isbn&&!lookedUp)runLookup(isbnDigits(r.isbn)[0]);else runFirst(true);
       }catch(e){
         if(e.budget){budget=e.budget;store.set("bc-budget",budget)}
         setProg("ai","err",e.code==="unauthorized"?"Access key not accepted. Reconnect in Settings.":(e.message||"Claude couldn’t read the photos."));
