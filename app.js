@@ -230,14 +230,14 @@ const budgetLeft=()=>hasClaude&&budget&&budget.spentUsd+0.03<=budget.budgetUsd&&
 /* ---------- sheets (settings, add, form) ---------- */
 const layer=$("#layer");
 function closeSheet(){layer.innerHTML="";syncScroll()}
-function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv")||$(".twinv"))?"hidden":""}
+function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv")||$(".twinv")||$(".fixv"))?"hidden":""}
 function sheet(html){
   layer.innerHTML=`<div class="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   syncScroll();
   const scrim=layer.firstElementChild;scrim.addEventListener("click",e=>{if(e.target===scrim)closeSheet()});
   const s=scrim.firstElementChild;$$("[data-close]",s).forEach(x=>x.onclick=closeSheet);return s;
 }
-document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".coverv"))closeCoverRun();else if($(".twinv"))closeTwin()});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if($(".fixv")){closeFix();return}if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".fixrunv"))closeFixRun();else if($(".coverv"))closeCoverRun();else if($(".twinv"))closeTwin()});
 
 function openSettings(){
   const s=sheet(`
@@ -281,6 +281,7 @@ async function photoUrl(b){
   const url=URL.createObjectURL(new Blob([arr],{type:"image/jpeg"}));photoCache.set(b.id,url);return url;
 }
 function setCachedPhoto(id,blob){if(photoCache.has(id))URL.revokeObjectURL(photoCache.get(id));photoCache.set(id,URL.createObjectURL(blob))}
+function newPhotoTaken(id,blob){setCachedPhoto(id,blob);if(origCache.has(id)){URL.revokeObjectURL(origCache.get(id));origCache.delete(id)}} // a retake replaces the photo as taken too
 
 function ribbonsHtml(b){
   const mk=marksOf(b);if(!mk.special&&!mk.signed)return "";
@@ -290,26 +291,28 @@ function ribbonsHtml(b){
 function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   closeBook();
-  const sp=spineOf(b),mode=coverMode(b),mk0=marksOf(b),is3d=mode!=="photo",pal=mode==="online"?paletteOf(b):null;
+  const sp=spineOf(b),mode=coverMode(b),mk0=marksOf(b),is3d=true,pal=mode==="online"?paletteOf(b):null;
+  const srcName=/openlibrary/.test(b.coverUrl||"")?"Open Library":"Google Books";
   const fact=(k,v,s)=>v?`<div class="fact"><div class="k">${k}</div><div class="v">${esc(v)}</div>${s?`<div class="s">${esc(s)}</div>`:""}</div>`:"";
   const v=document.createElement("div");v.className="book";v.setAttribute("role","dialog");v.setAttribute("aria-label",b.title);
   v.innerHTML=`<div class="book-inner ${sp.cls}">
     <div class="hero${is3d?" h3d":""}" id="hero">
-      ${is3d?`<div class="hbackdrop" aria-hidden="true">${mode==="online"?`<img src="${esc(b.coverUrl)}" alt="" referrerpolicy="no-referrer">`:""}</div>
-        <div class="b3d${mk0.special?" special":""}${mk0.sprayed?" sprayed":""}" role="img" aria-label="${esc(mode==="online"?`Cover of ${b.title}`:`${b.title}: no cover yet`)}"><div class="b3d-book"><span class="b3d-pages"></span><span class="b3d-front">${coverFaceHtml(b,mode)}${mk0.special?`<span class="b3d-foil"></span>`:""}</span></div><span class="b3d-shadow"></span></div>`
+      ${is3d?`<div class="hbackdrop" aria-hidden="true">${mode==="online"?`<img src="${esc(b.coverUrl)}" alt="" referrerpolicy="no-referrer">`:mode==="photo"?`<img alt="" data-photo="${b.id}">`:""}</div>
+        <div class="b3d${mk0.special?" special":""}${mk0.sprayed?" sprayed":""}" role="img" aria-label="${esc(mode==="online"?`Cover of ${b.title}`:mode==="photo"?`Your photo of ${b.title}`:`${b.title}: no cover yet`)}"><div class="b3d-book"><span class="b3d-pages"></span><span class="b3d-front">${coverFaceHtml(b,mode)}${mk0.special?`<span class="b3d-foil"></span>`:""}</span></div><span class="b3d-shadow"></span></div>`
         :`<div class="loading" id="heroInner">Loading photo…</div>`}
       <button class="over back" id="bkBack" aria-label="Back to shelves">${ICON.back}</button>
       ${ribbonsHtml(b)}
-      <div class="herobar"><span class="hchip">${mode==="online"?"Online cover":mode==="photo"?"Your photo":"No cover yet"}</span><span class="hbtns">${mode!=="online"?`<button class="over hbtn" id="bkPhoto">${ICON.cam}${b.hasPhoto?"Retake photo":"Add photo"}</button>`:""}<button class="over hbtn" id="bkCover">${mode==="online"?"Change cover":"Find cover"}</button></span></div>
+      <div class="herobar"><span class="hchip">${mode==="online"?`Online cover · ${srcName}`:mode==="photo"?(b.photoFixed?"Your photo · straightened":"Your photo"):"No cover yet"}</span><span class="hbtns">${mode==="photo"?`<button class="over hbtn" id="bkFix">${b.photoFixed?"Adjust":"Straighten"}</button>`:""}${mode==="none"?`<button class="over hbtn" id="bkPhoto">${ICON.cam}Add photo</button>`:""}<button class="over hbtn" id="bkCover">${mode==="none"?"Find cover":"Change cover"}</button></span></div>
     </div>
     <div class="band ${sp.light&&!pal?"light":""}">
       <div class="row"><span class="no">No. ${pad(b.id)}</span>${stars(b.rating)}</div>
       <h1>${esc(b.title)}</h1>
       <div class="by">${esc(b.author)}${b.series?` · ${esc(b.series)}${b.seriesNo!==""?` #${esc(b.seriesNo)}`:""}`:""}</div>
       ${readBarHtml(b)}
-      <div class="row start"><span class="pill">${esc(statusLabel(b.status||"TBR"))}</span>${b.priority?`<span class="pill prio">High priority</span>`:""}${marksOf(b).sprayed?`<span class="pill edge">Sprayed edges</span>`:""}${b.dateRead&&b.dateRead!=="Not registered"?`<span class="by">Read ${esc(b.dateRead)}</span>`:""}</div>
+      <div class="row start"><span class="pill">${esc(statusLabel(b.status||"TBR"))}</span>${b.priority?`<span class="pill prio">High priority</span>`:""}${marksOf(b).sprayed?`<span class="pill edge">Sprayed edges</span>`:""}${b.dateRead&&b.dateRead!=="Not registered"?`<span class="by">Read ${esc(b.dateRead)}</span>`:""}<span class="swatches" hidden><span>Cover colours</span><i></i><i></i><i></i></span></div>
     </div>
     <div class="book-body">
+      ${b.coverUrl&&b.hasPhoto?`<div class="card covershown"><div class="sectlabel">Cover shown</div><div class="seg2"><button data-pref="" aria-pressed="${mode==="online"}">Online cover</button><button data-pref="photo" aria-pressed="${mode==="photo"}">My photo</button></div><div class="small muted">Both are kept: switch any time.</div></div>`:""}
       ${b.comments?`<p class="quote">“${esc(b.comments)}”</p>`:""}
       <div class="facts">
         ${fact("Genre",b.genre,b.subgenre)}
@@ -327,6 +330,13 @@ function openBook(id){
   document.body.append(v);syncScroll();
   if(pal){const bi=$(".book-inner",v);bi.style.setProperty("--sp-bg",pal[0]);bi.style.setProperty("--sp-fg",pal[2]);applyPalette(bi,b)}
   wireCoverImages(v);
+  const fx=$("#bkFix",v);if(fx)fx.onclick=()=>openStraighten(books.find(x=>x.id===b.id)||b);
+  const showSwatches=p=>{const sw=$(".swatches",v);if(!sw||!p)return;$$("i",sw).forEach((x,i)=>x.style.background=p[i]);sw.hidden=false};
+  if(pal)showSwatches(pal);
+  if(mode==="photo")photoUrl(b).then(u=>u&&loadImg(u)).then(img=>{if(!img||!v.isConnected)return;const p=paletteFromImage(img);const bi=$(".book-inner",v);
+    bi.style.setProperty("--sp-bg",p[0]);bi.style.setProperty("--sp-fg",p[2]);bi.style.setProperty("--cv-dark",p[0]);bi.style.setProperty("--cv-accent",p[1]);bi.style.setProperty("--cv-light",p[2]);$(".band",v).classList.remove("light");showSwatches(p)}).catch(()=>{});
+  const cs=$(".covershown",v);if(cs)cs.onclick=async e=>{const t=e.target.closest("[data-pref]");if(!t||t.getAttribute("aria-pressed")==="true")return;
+    $$("[data-pref]",cs).forEach(x=>x.disabled=true);try{await quickSave(books.find(x=>x.id===b.id)||b,{coverPref:t.dataset.pref});render();openBook(b.id)}catch(err){$$("[data-pref]",cs).forEach(x=>x.disabled=false);handleApiError(err,"Couldn’t switch")}};
   $("#bkCover",v).onclick=()=>openCoverPicker(books.find(x=>x.id===b.id)||b);
   $("#bkBack",v).onclick=closeBook;
   $("#bkEdit",v).onclick=()=>openForm(b);
@@ -344,7 +354,7 @@ function openBook(id){
     try{
       const img=await blobToB64(r.photos[0].blob);
       const d=await api("photo_set",{id:b.id,image:img});
-      setCachedPhoto(b.id,r.photos[0].blob);upsertBook(d.book);toast("Photo saved");openBook(b.id);
+      newPhotoTaken(b.id,r.photos[0].blob);upsertBook(d.book);toast("Photo saved");openBook(b.id);
     }catch(e){btn.disabled=false;handleApiError(e,"Couldn’t save the photo");openBook(b.id)}
   });
   $("#bkDel",v).onclick=()=>{
@@ -1018,7 +1028,7 @@ function openForm(b,capture,pre,after){
       if(copyOf&&!copyOf.workId){try{await setWork([copyOf.id],rec.workId)}catch(e){toast("Saved, but linking the copies failed: "+e.message)}}
       if(coverIdx>=0&&photos[coverIdx]){
         fs.textContent="Saving the photo to your Drive…";
-        try{const pd=await api("photo_set",{id:saved.id,image:await blobToB64(photos[coverIdx].blob)});saved=upsertBook(pd.book);setCachedPhoto(saved.id,photos[coverIdx].blob)}
+        try{const pd=await api("photo_set",{id:saved.id,image:await blobToB64(photos[coverIdx].blob)});saved=upsertBook(pd.book);newPhotoTaken(saved.id,photos[coverIdx].blob)}
         catch(e){toast("Book saved, but the photo wasn’t: "+e.message)}
       }
       photos.forEach(p=>URL.revokeObjectURL(p.url));
@@ -1063,7 +1073,7 @@ function openPhotoSession(list){
     status:()=>`${saved} saved${pending?` · ${pending} uploading`:""}${failed?` · ${failed} failed`:""}`,
     skip:()=>{i++},
     shot:blob=>{const b=list[i];i++;pending++;
-      queue=queue.then(async()=>{try{const d=await api("photo_set",{id:b.id,image:await blobToB64(blob)});upsertBook(d.book);setCachedPhoto(b.id,blob);saved++}catch(e){failed++}pending--;ses.repaint&&ses.repaint()})},
+      queue=queue.then(async()=>{try{const d=await api("photo_set",{id:b.id,image:await blobToB64(blob)});upsertBook(d.book);newPhotoTaken(b.id,blob);saved++}catch(e){failed++}pending--;ses.repaint&&ses.repaint()})},
     repaint:null
   };
   openCamera({session:ses},async()=>{await queue;render();toast(`Photo session done: ${saved} saved${failed?`, ${failed} failed`:""}`)});
@@ -1079,6 +1089,7 @@ function openStats(){
   v.addEventListener("click",e=>{
     if(e.target.closest("#stBack")){closeStats();return}
     if(e.target.closest("#stSugg")){openCopySuggestions();return}
+    if(e.target.closest("#phFix")){openFixRun();return}
     if(e.target.closest("#phSession")){openPhotoSession((v._base||[]).filter(b=>!b.hasPhoto));return}
     if(e.target.closest("#recGo")){runRecommend(v);return}
     const ws=e.target.closest("[data-wishseries]");if(ws){addMissingToWishlist(ws.dataset.wishseries,ws);return}
@@ -1173,7 +1184,8 @@ function renderStats(v){
      ${S.noLocation?`<button class="btn" data-d="${reg(T("No location yet"),base.filter(b=>!b.location))}">${S.noLocation} book${S.noLocation===1?" has":"s have"} no location yet</button>`:""}</section>
    <section class="vcard"><h2>Photos</h2><p class="sub">${S.withPhoto} of ${S.total} books have a photo of your copy</p>
      <div class="prow done"><span class="trk"><span class="fill" data-w="${S.total?(100*S.withPhoto/S.total).toFixed(1):0}"></span></span></div>
-     ${S.total-S.withPhoto?`<button class="btn primary" id="phSession">${ICON.cam}Start a photo session (${S.total-S.withPhoto} to go)</button>`:""}</section>
+     ${S.total-S.withPhoto?`<button class="btn primary" id="phSession">${ICON.cam}Start a photo session (${S.total-S.withPhoto} to go)</button>`:""}
+     ${(()=>{const n=books.filter(b=>owned(b)&&b.hasPhoto&&!b.photoFixed).length;return n?`<button class="btn" id="phFix">Straighten my photos (${n})</button>`:""})()}</section>
    `}</div>`;
   v._drills=drills;v._base=base;
   $$("[data-w]",v).forEach(el=>el.style.width=el.dataset.w+"%");
@@ -1228,8 +1240,8 @@ function layoutSpines(root,{maxPpu=22,minW=3,fixedPpu=0}={}){
   });
 }
 
-function closeTwin(){const v=$(".twinv:not(.coverv)");if(v)v.remove();syncScroll()}
-function refreshTwin(){const v=$(".twinv:not(.coverv)");if(v)renderTwin(v);renderChrome()}
+function closeTwin(){const v=$(".twinv:not(.coverv):not(.fixrunv)");if(v)v.remove();syncScroll()}
+function refreshTwin(){const v=$(".twinv:not(.coverv):not(.fixrunv)");if(v)renderTwin(v);renderChrome()}
 function openTwin(){
   closeTwin();
   const v=document.createElement("div");v.className="twinv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Bookcases");
@@ -1652,7 +1664,7 @@ async function findCoverCandidates(b,{quick=false,query=""}={}){
 function coverFaceHtml(b,mode){
   mode=mode||coverMode(b);
   if(mode==="online")return `<img class="cimg" src="${esc(b.coverUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback="${b.id}">`;
-  if(mode==="photo")return `<img class="cimg photo" alt="" data-photo="${b.id}">`;
+  if(mode==="photo")return `<img class="cimg mine" alt="" data-photo="${b.id}">`;
   const lw=Math.max(...String(b.title||"").split(/\s+/).map(w=>w.length),0);
   return `<span class="cph ${colorCls(b)}${lw>12?" xs":lw>8?" s":""}"><i>${esc(b.title)}</i>${b.author?`<em>${esc(b.author)}</em>`:""}</span>`;
 }
@@ -1682,7 +1694,7 @@ function openCoverPicker(b,o={}){
     <form class="cpsearch" id="cpSearch"><input class="field" id="cpQ" type="search" placeholder="Search other words: title, author, publisher" value="${esc(query)}" autocomplete="off"><button class="btn" type="submit">Search</button></form>
     <div class="card cpphoto">${b.hasPhoto?`<img class="cpthumb" data-photo="${b.id}" alt="">`:`<span class="cpthumb none">${ICON.cam}</span>`}
       <span class="cptxt"><b>Your photo</b><span class="small muted">${b.hasPhoto?"Kept in your Drive. Show it instead of an online cover any time.":"Photograph your own copy."}</span></span>
-      <span class="cpbtns">${b.hasPhoto?`<button class="btn" id="cpUsePhoto" ${coverMode(b)==="photo"?"disabled":""}>${coverMode(b)==="photo"?"Shown":"Use it"}</button>`:""}<button class="btn" id="cpPhoto">${b.hasPhoto?"Retake":"Take photo"}</button></span></div>
+      <span class="cpbtns">${b.hasPhoto?`<button class="btn" id="cpFix">${b.photoFixed?"Adjust":"Straighten"}</button>`:""}${b.hasPhoto?`<button class="btn" id="cpUsePhoto" ${coverMode(b)==="photo"?"disabled":""}>${coverMode(b)==="photo"?"Shown":"Use it"}</button>`:""}<button class="btn" id="cpPhoto">${b.hasPhoto?"Retake":"Take photo"}</button></span></div>
     <p class="small err" id="cpMsg"></p>
     <div class="actions">${b.coverUrl?`<button class="btn danger left" id="cpRemove">Remove online cover</button>`:""}${o.onSkip?`<button class="btn" id="cpSkip">Skip</button>`:`<button class="btn" id="cpCancel">Cancel</button>`}<button class="btn primary" id="cpUse" disabled>Use this cover</button></div>`);
   wireCoverImages(s);
@@ -1714,11 +1726,12 @@ function openCoverPicker(b,o={}){
       toast("Cover saved");done();
     }catch(e){useBtn.textContent="Use this cover";useBtn.disabled=false;handleApiError(e,"Couldn’t save the cover")}
   };
+  const cf=$("#cpFix",s);if(cf)cf.onclick=()=>{closeSheet();openStraighten(b,{onSaved:()=>{if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}},onClose:()=>openCoverPicker(books.find(x=>x.id===b.id)||b,o)})};
   const up=$("#cpUsePhoto",s);if(up)up.onclick=async()=>{up.disabled=true;try{await quickSave(b,{coverPref:"photo"});toast("Showing your photo");done()}catch(e){up.disabled=false;handleApiError(e,"Couldn’t save")}};
   const rm=$("#cpRemove",s);if(rm)rm.onclick=async()=>{rm.disabled=true;try{const d=await api("covers_set",{items:[{id:b.id,url:""}]});(d.books||[]).forEach(upsertBook);toast("Online cover removed");done()}catch(e){rm.disabled=false;handleApiError(e,"Couldn’t remove")}};
   $("#cpPhoto",s).onclick=()=>{closeSheet();openCamera({steps:COVER_STEPS,max:1},async r=>{
     if(!r.photos.length){openCoverPicker(b,o);return}
-    try{const d=await api("photo_set",{id:b.id,image:await blobToB64(r.photos[0].blob)});setCachedPhoto(b.id,r.photos[0].blob);let nb=upsertBook(d.book);
+    try{const d=await api("photo_set",{id:b.id,image:await blobToB64(r.photos[0].blob)});newPhotoTaken(b.id,r.photos[0].blob);let nb=upsertBook(d.book);
       if(nb.coverUrl&&nb.coverPref!=="photo")nb=await quickSave(nb,{coverPref:"photo"});toast("Photo saved");if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}}
     catch(e){handleApiError(e,"Couldn’t save the photo")}
   })};
@@ -1791,6 +1804,190 @@ function chooseCovers(v){
   const next=()=>{const r=list[i++];if(!r){paintCoverRun($(".coverv"));return}
     openCoverPicker(r.b,{cands:r.cands,onDone:()=>{if(books.find(x=>x.id===r.b.id).coverUrl)r.state="saved";next()},onSkip:next,onClose:()=>paintCoverRun($(".coverv"))})};
   next();
+}
+
+/* ---------- straighten and clean up your own cover photos (the photo as taken is always kept) ---------- */
+const b64ToUrl=(b64,type)=>{const bin=atob(b64);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return URL.createObjectURL(new Blob([a],{type:type||"image/jpeg"}))};
+const loadImg=src=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src});
+const origCache=new Map(); // book id → object URL of the photo as taken
+async function originalPhoto(b){
+  if(origCache.has(b.id))return origCache.get(b.id);
+  if(!b.photoFixed)return photoUrl(b); // not straightened yet: the photo as taken is the current one
+  const d=await api("photo_original",{id:b.id});if(!d.image)return null;
+  const u=b64ToUrl(d.image);origCache.set(b.id,u);return u;
+}
+const DEFAULT_CORNERS=[[.04,.04],[.96,.04],[.96,.96],[.04,.96]];
+// Perspective: the matrix that maps the flat result (dst) back onto the photo (src).
+function homography(src,dst){
+  const A=[],B=[];
+  for(let i=0;i<4;i++){const [x,y]=dst[i],[u,v]=src[i];A.push([x,y,1,0,0,0,-u*x,-u*y]);B.push(u);A.push([0,0,0,x,y,1,-v*x,-v*y]);B.push(v)}
+  for(let c=0;c<8;c++){let p=c;for(let r=c+1;r<8;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;[A[c],A[p]]=[A[p],A[c]];[B[c],B[p]]=[B[p],B[c]];
+    for(let r=0;r<8;r++){if(r===c||!A[c][c])continue;const f=A[r][c]/A[c][c];for(let k=c;k<8;k++)A[r][k]-=f*A[c][k];B[r]-=f*B[c]}}
+  return [...B.map((v,i)=>v/(A[i][i]||1)),1];
+}
+// Cut the cover out of the photo and lay it flat. corners: fractions (top-left, top-right, bottom-right, bottom-left).
+function straighten(img,corners,maxSide){
+  const sw0=img.naturalWidth||img.width,sh0=img.naturalHeight||img.height;
+  const pre=Math.min(1,(maxSide*1.6)/Math.max(sw0,sh0)),sw=Math.round(sw0*pre),sh=Math.round(sh0*pre);
+  const sc=document.createElement("canvas");sc.width=sw;sc.height=sh;const g0=sc.getContext("2d");g0.drawImage(img,0,0,sw,sh);const S=g0.getImageData(0,0,sw,sh).data;
+  const q=corners.map(([x,y])=>[x*sw,y*sh]),dd=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  let W=(dd(q[0],q[1])+dd(q[3],q[2]))/2,H=(dd(q[0],q[3])+dd(q[1],q[2]))/2;
+  const k=Math.min(1/pre,maxSide/Math.max(W,H));W=Math.max(20,Math.round(W*k));H=Math.max(30,Math.round(H*k));
+  const h=homography(q,[[0,0],[W,0],[W,H],[0,H]]);
+  const out=document.createElement("canvas");out.width=W;out.height=H;const go=out.getContext("2d");const O=go.createImageData(W,H),D=O.data;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const X=x+.5,Y=y+.5,den=h[6]*X+h[7]*Y+1,u=(h[0]*X+h[1]*Y+h[2])/den-.5,v=(h[3]*X+h[4]*Y+h[5])/den-.5;
+    const x0=Math.max(0,Math.min(sw-2,Math.floor(u))),y0=Math.max(0,Math.min(sh-2,Math.floor(v))),fx=Math.max(0,Math.min(1,u-x0)),fy=Math.max(0,Math.min(1,v-y0));
+    const a=(y0*sw+x0)*4,b2=a+4,c=a+sw*4,d=c+4,o=(y*W+x)*4;
+    for(let ch=0;ch<3;ch++)D[o+ch]=S[a+ch]*(1-fx)*(1-fy)+S[b2+ch]*fx*(1-fy)+S[c+ch]*(1-fx)*fy+S[d+ch]*fx*fy;D[o+3]=255;
+  }
+  go.putImageData(O,0,0);return out;
+}
+// Better colours: a gentle white balance, contrast stretch and a little more colour.
+function enhance(cv){
+  const g=cv.getContext("2d"),im=g.getImageData(0,0,cv.width,cv.height),p=im.data,n=p.length/4;
+  const hist=new Uint32Array(256);let sr=0,sg=0,sb=0;
+  for(let i=0;i<p.length;i+=4){hist[(p[i]*299+p[i+1]*587+p[i+2]*114)/1000|0]++;sr+=p[i];sg+=p[i+1];sb+=p[i+2]}
+  const pct=f=>{let a=0;for(let i=0;i<256;i++){a+=hist[i];if(a>=n*f)return i}return 255};
+  const lo=Math.min(pct(.005),40),hi=Math.max(pct(.995),200),k=Math.min(1.5,255/Math.max(1,hi-lo));
+  const avg=(sr+sg+sb)/3,wb=[sr,sg,sb].map(s=>1+(Math.max(.82,Math.min(1.22,avg/Math.max(1,s)))-1)*.5);
+  for(let i=0;i<p.length;i+=4){
+    let r=(p[i]*wb[0]-lo)*k,gg=(p[i+1]*wb[1]-lo)*k,b=(p[i+2]*wb[2]-lo)*k;const l=r*.299+gg*.587+b*.114;
+    p[i]=l+(r-l)*1.12;p[i+1]=l+(gg-l)*1.12;p[i+2]=l+(b-l)*1.12;
+  }
+  g.putImageData(im,0,0);return cv;
+}
+async function canvasJpeg(cv){let q=.9,blob;for(let i=0;i<4;i++){blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",q));if(blob&&blob.size<950000)break;q-=.12}return blob}
+async function makeStraight(img,corners,better){const cv=straighten(img,corners,1400);if(better)enhance(cv);return canvasJpeg(cv)}
+async function findCorners(ids){
+  const d=await api("photo_corners",{ids});
+  if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
+  return d.corners||{};
+}
+async function saveStraight(b,blob){
+  const d=await api("photo_improve",{id:b.id,image:await blobToB64(blob)});
+  if(!b.photoFixed&&photoCache.has(b.id)){origCache.set(b.id,photoCache.get(b.id));photoCache.delete(b.id)} // the photo as taken stays at hand
+  setCachedPhoto(b.id,blob);return upsertBook(d.book);
+}
+
+/* the editor: drag four dots onto the corners of the cover */
+function closeFix(){const v=$(".fixv");if(v)v.remove();syncScroll()}
+async function openStraighten(b,o={}){
+  closeFix();
+  let corners=(o.corners||DEFAULT_CORNERS).map(p=>p.slice()),img=null,better=o.better!==false,prevT=0;
+  const v=document.createElement("div");v.className="fixv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Straighten photo");
+  v.innerHTML=`<div class="fixin">
+    <div class="fixtop"><button class="x" id="fxX" aria-label="Close">×</button><div class="grow1"><div class="eyebrow">${esc(b.title)}</div><h2>Straighten your photo</h2></div></div>
+    <div class="fixstage" id="fxStage"><div class="notice"><span>Loading your photo…</span></div></div>
+    <p class="fixmsg" id="fxMsg">Drag the four dots onto the corners of the cover.</p>
+    <div class="fixrow"><div class="fixprev"><canvas id="fxPrev" aria-label="Preview of the straightened cover" role="img"></canvas><span>Result</span></div>
+      <div class="fixopts"><label class="fxtog"><input type="checkbox" id="fxBetter" ${better?"checked":""}> Better colours</label>
+        ${hasClaude?`<button class="btn" id="fxAuto">Find the corners</button>`:""}<button class="btn" id="fxReset">Reset</button></div></div>
+    <div class="actions">${b.photoFixed&&!o.batch?`<button class="btn left" id="fxRestore">Back to the original</button>`:""}<button class="btn" id="fxCancel">Cancel</button><button class="btn primary" id="fxSave" disabled>${o.batch?"Use these corners":"Save straightened photo"}</button></div>
+  </div>`;
+  document.body.append(v);syncScroll();
+  const msg=$("#fxMsg",v),stage=$("#fxStage",v),prev=$("#fxPrev",v);
+  const close=()=>{closeFix();if(o.onClose)o.onClose()};
+  $("#fxX",v).onclick=close;$("#fxCancel",v).onclick=close;
+  const rs=$("#fxRestore",v);if(rs)rs.onclick=async()=>{rs.disabled=true;try{const d=await api("photo_restore",{id:b.id});if(photoCache.has(b.id)){URL.revokeObjectURL(photoCache.get(b.id));photoCache.delete(b.id)}if(origCache.has(b.id)){photoCache.set(b.id,origCache.get(b.id));origCache.delete(b.id)}upsertBook(d.book);toast("Back to the original photo");closeFix();render();if(o.onSaved)o.onSaved();else if($(".book"))openBook(b.id)}catch(e){rs.disabled=false;handleApiError(e,"Couldn’t restore")}};
+  try{const u=await originalPhoto(b);if(!u)throw new Error("no photo");img=await loadImg(u)}
+  catch(e){stage.innerHTML=`<div class="notice"><span>Couldn’t load your photo.</span></div>`;return}
+  if(!v.isConnected)return;
+  stage.innerHTML=`<div class="fxbox" id="fxBox"><img src="${img.src}" alt="Your photo of ${esc(b.title)}"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon id="fxPoly"/></svg>
+    ${["Top-left","Top-right","Bottom-right","Bottom-left"].map((l,i)=>`<button class="fxh" data-k="${i}" aria-label="${l} corner: drag, or use the arrow keys"></button>`).join("")}</div>`;
+  const box=$("#fxBox",v),poly=$("#fxPoly",v),hs=$$(".fxh",v);
+  const small=(()=>{const c=document.createElement("canvas"),s=Math.min(1,900/Math.max(img.naturalWidth,img.naturalHeight));c.width=Math.round(img.naturalWidth*s);c.height=Math.round(img.naturalHeight*s);c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c})();
+  const preview=()=>{const cv=straighten(small,corners,260);if(better)enhance(cv);prev.width=cv.width;prev.height=cv.height;prev.getContext("2d").drawImage(cv,0,0)};
+  const place=()=>{hs.forEach((h,i)=>{h.style.left=corners[i][0]*100+"%";h.style.top=corners[i][1]*100+"%"});poly.setAttribute("points",corners.map(p=>`${p[0]*100},${p[1]*100}`).join(" "))};
+  const later=()=>{clearTimeout(prevT);prevT=setTimeout(preview,60)};
+  place();preview();$("#fxSave",v).disabled=false;
+  box.addEventListener("pointerdown",e=>{
+    const h=e.target.closest(".fxh");if(!h)return;e.preventDefault();h.setPointerCapture(e.pointerId);h.classList.add("drag");const k=+h.dataset.k;
+    const mv=ev=>{const r=box.getBoundingClientRect();corners[k]=[Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(ev.clientY-r.top)/r.height))];place()};
+    const up=()=>{h.classList.remove("drag");h.removeEventListener("pointermove",mv);h.removeEventListener("pointerup",up);h.removeEventListener("pointercancel",up);preview()};
+    h.addEventListener("pointermove",mv);h.addEventListener("pointerup",up);h.addEventListener("pointercancel",up);
+  });
+  box.addEventListener("keydown",e=>{const h=e.target.closest(".fxh");if(!h)return;const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(!d)return;e.preventDefault();
+    const k=+h.dataset.k,st=e.shiftKey?.02:.004;corners[k]=[Math.max(0,Math.min(1,corners[k][0]+d[0]*st)),Math.max(0,Math.min(1,corners[k][1]+d[1]*st))];place();later()});
+  $("#fxBetter",v).onchange=e=>{better=e.target.checked;preview()};
+  $("#fxReset",v).onclick=()=>{corners=DEFAULT_CORNERS.map(p=>p.slice());place();preview();msg.textContent="Drag the four dots onto the corners of the cover."};
+  const auto=async()=>{const bt=$("#fxAuto",v);if(!bt)return;
+    if(!budgetLeft()){msg.textContent="This month’s Claude limit is reached: drag the dots yourself.";return}
+    bt.disabled=true;msg.textContent="Claude is finding the corners… (a few seconds, about $0.002)";
+    try{const c=await findCorners([b.id]);if(!v.isConnected)return;if(c[b.id]){corners=c[b.id];place();preview();msg.textContent="Corners found. Drag a dot if it’s not exactly on the corner."}else msg.textContent="Claude couldn’t find the cover: drag the dots yourself."}
+    catch(e){msg.textContent=(e.message||"Couldn’t find the corners")+". Drag the dots yourself."}
+    bt.disabled=false};
+  const ab=$("#fxAuto",v);if(ab)ab.onclick=auto;
+  if(!o.corners&&hasClaude&&budgetLeft())auto();
+  $("#fxSave",v).onclick=async e=>{
+    if(o.batch){closeFix();o.onCorners(corners,better);return}
+    const bt=e.target;bt.disabled=true;bt.textContent="Saving…";
+    try{const blob=await makeStraight(img,corners,better);await saveStraight(b,blob);toast("Straightened photo saved · the original is kept");closeFix();render();
+      if(o.onSaved)o.onSaved();else if($(".book"))openBook(b.id)}
+    catch(err){bt.disabled=false;bt.textContent="Save straightened photo";handleApiError(err,"Couldn’t save")}
+  };
+}
+
+/* straighten every photo at once */
+let fixRun=null;
+function closeFixRun(){const v=$(".fixrunv");if(v)v.remove();syncScroll()}
+function openFixRun(){
+  closeFixRun();
+  const v=document.createElement("div");v.className="twinv fixrunv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Straighten photos");document.body.append(v);syncScroll();
+  if(!fixRun||(!fixRun.running&&!fixRun.rows.some(r=>r.state==="ready")))
+    fixRun={rows:books.filter(b=>owned(b)&&b.hasPhoto&&!b.photoFixed).sort((a,b)=>a.id-b.id).map(b=>({b,state:"wait",better:true})),running:false,msg:""};
+  v.addEventListener("click",e=>{const t=e.target.closest("button");if(!t)return;
+    if(t.id==="frBack"){closeFixRun();render();return}
+    if(t.id==="frStart"){runFixRun();return}
+    if(t.id==="frSave"){saveFixRun();return}
+    if(t.dataset.row){const r=fixRun.rows[+t.dataset.row];if(r&&["ready","saved","fail"].includes(r.state)&&!fixRun.running)
+      openStraighten(r.b,{corners:r.corners||DEFAULT_CORNERS,better:r.better,batch:r.state!=="saved",onCorners:(c,bt)=>{r.corners=c;r.better=bt;r.state="ready";r.thumb=null;thumbFor(r).then(()=>paintFixRun())},onClose:()=>paintFixRun(),onSaved:()=>paintFixRun()})}
+  });
+  paintFixRun();
+}
+function paintFixRun(){
+  const v=$(".fixrunv");if(!v)return;const R=fixRun.rows,cnt=s=>R.filter(r=>r.state===s).length;
+  const done=R.filter(r=>!["wait","work"].includes(r.state)).length,calls=Math.ceil(R.length/4);
+  v.innerHTML=`<div class="statsv-inner">
+    <div class="statsv-head"><button class="roundbtn" id="frBack" aria-label="Back">${ICON.back}</button><div class="grow1"><div class="eyebrow">Your photos</div><h1>Straighten photos</h1></div></div>
+    ${!R.length?`<div class="notice"><strong>Nothing to straighten</strong><span>All your photos are straightened already. Open a book to adjust one.</span></div>`:`
+    <div class="card crprog"><div class="crline"><span><b>${fixRun.running?"Working…":done?"Ready to check":"Ready"}</b> ${done} of ${R.length}</span></div>
+      <div class="crbar"><span data-w="${(100*done/R.length).toFixed(1)}"></span></div>
+      ${fixRun.msg?`<p class="small err">${esc(fixRun.msg)}</p>`:""}
+      ${!fixRun.running&&!done?`<p class="small muted">${hasClaude?`Claude finds the cover’s corners in each photo (4 photos per reading, about $${(calls*0.008).toFixed(2)} in all, ${calls} of your monthly readings). Then each photo is cut out flat and gets better colours.`:"Each photo gets a standard crop and better colours. Add the Anthropic key to find the corners automatically."} You check them before anything is saved. The photos as taken are always kept.</p><button class="btn primary" id="frStart">Start</button>`:""}</div>
+    ${done?`<p class="small muted">Tap a photo to adjust its corners.</p>`:""}
+    <div class="frgrid">${R.map((r,i)=>`<button class="frtile st-${r.state}" data-row="${i}" ${["ready","saved","fail"].includes(r.state)?"":"disabled"} aria-label="${esc(r.b.title)}"><span class="frimg">${r.thumb?`<img src="${r.thumb}" alt="">`:coverFaceHtml(r.b,"photo")}</span><span class="wt">${esc(r.b.title)}</span><span class="wsub">${{wait:"",work:"Working…",ready:"Ready",saved:"Saved ✓",fail:"Check corners"}[r.state]}</span></button>`).join("")}</div>
+    ${!fixRun.running&&cnt("ready")?`<div class="actions sticky"><button class="btn primary" id="frSave">Save ${cnt("ready")} straightened photo${cnt("ready")===1?"":"s"}</button></div>`:""}`}
+  </div>`;
+  $$("[data-w]",v).forEach(el=>el.style.width=el.dataset.w+"%");wireCoverImages(v);
+}
+async function thumbFor(r){
+  try{const img=await loadImg(await originalPhoto(r.b));const cv=straighten(img,r.corners||DEFAULT_CORNERS,220);if(r.better)enhance(cv);r.thumb=cv.toDataURL("image/jpeg",.8)}catch(e){r.state="fail"}
+}
+async function runFixRun(){
+  if(fixRun.running)return;fixRun.running=true;fixRun.msg="";paintFixRun();
+  const todo=fixRun.rows.filter(r=>r.state==="wait");
+  for(let i=0;i<todo.length;i+=4){
+    const chunk=todo.slice(i,i+4);chunk.forEach(r=>r.state="work");paintFixRun();
+    let found={};
+    if(hasClaude&&!fixRun.noClaude){
+      try{found=await findCorners(chunk.map(r=>r.b.id))}
+      catch(e){fixRun.msg=(e.code==="budget"||e.code==="rate_limited")?e.message+" The rest get a standard crop; adjust them by tapping.":"Claude couldn’t find corners for some photos: tap them to adjust.";if(e.code==="budget"||e.code==="rate_limited")fixRun.noClaude=true}
+    }
+    await Promise.all(chunk.map(async r=>{r.corners=found[r.b.id]||DEFAULT_CORNERS;r.state=(found[r.b.id]||!hasClaude)?"ready":"fail";await thumbFor(r)}));
+    paintFixRun();
+  }
+  fixRun.running=false;paintFixRun();
+}
+async function saveFixRun(){
+  const todo=fixRun.rows.filter(r=>r.state==="ready");fixRun.running=true;let n=0;
+  for(const r of todo){
+    const v=$(".fixrunv"),b=$("#frSave",v);
+    try{const img=await loadImg(await originalPhoto(r.b));await saveStraight(r.b,await makeStraight(img,r.corners,r.better));r.state="saved";n++}
+    catch(e){r.state="fail";fixRun.msg=e.message||"Some photos couldn’t be saved."}
+    paintFixRun();
+  }
+  fixRun.running=false;toast(`${n} photo${n===1?"":"s"} straightened · the originals are kept`);render();paintFixRun();
 }
 
 /* ---------- boot ---------- */
