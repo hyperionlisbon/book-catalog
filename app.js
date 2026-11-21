@@ -571,7 +571,7 @@ function openCamera(opts,onDone){
       done.disabled=false;done.textContent="Finish";shutter.disabled=!stream||!b;return}
     const i=Math.min(photos.length,steps.length-1);
     stepEl.innerHTML=photos.length>=max?`All set<small>Tap Done</small>`:`${steps.length>1?(photos.length+1)+". ":""}${esc(steps[i][0])}<small>${esc(steps[i][1])}</small>`;
-    $("#camThumbs",root).innerHTML=photos.map((p,i)=>`<img src="${p.url}" alt="Photo ${i+1}">`).join("");
+    $("#camThumbs",root).innerHTML=(photos.length>2?`<span class="cam-count">${photos.length} photos</span>`:"")+photos.slice(-2).map((p,i)=>`<img src="${p.url}" alt="Photo ${photos.length>2?photos.length-1+i:i+1}">`).join("");
     done.disabled=!photos.length;done.hidden=!!opts.autoIsbn;shutter.disabled=!stream||photos.length>=max};
   const showIsbn=()=>{const chip=$("#camChip",root);chip.textContent=`Barcode read: ${isbn}`;chip.hidden=!isbn};
   const stop=()=>{clearInterval(scanTimer);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null};
@@ -777,7 +777,53 @@ function findDupe(r,selfId){
   const mine=isbnDigits(r.isbn);
   return books.find(b=>b.id!==selfId&&((mine.length&&isbnDigits(b.isbn).some(x=>mine.includes(x)))||(norm(b.title)&&norm(b.title)===norm(r.title)&&norm(b.author)===norm(r.author)&&norm(b.language)===norm(r.language))));
 }
-function datalist(id,vals){return `<datalist id="${id}">${vals.map(v=>`<option value="${esc(v)}"></option>`).join("")}</datalist>`}
+/* Combo boxes: type freely, or tap ▾ to choose from the values you already use (several at once for subgenres and edition details). */
+const splitList=v=>String(v??"").split(",").map(x=>x.trim()).filter(Boolean);
+let comboSeq=0;
+// A tap anywhere outside an open list closes it.
+document.addEventListener("pointerdown",e=>{$$(".combo.open").forEach(w=>{if(!w.contains(e.target)&&w._close)w._close()})},true);
+function enhanceCombos(root,sources){
+  $$("input[data-combo]",root).forEach(inp=>{
+    const key=inp.dataset.combo,multi=inp.hasAttribute("data-multi"),all=()=>sources[key]||[];
+    const wrap=document.createElement("div");wrap.className="combo";inp.parentNode.insertBefore(wrap,inp);wrap.append(inp);
+    const btn=document.createElement("button");btn.type="button";btn.className="cbtn";btn.tabIndex=-1;
+    const lab=(inp.id&&root.querySelector(`label[for="${inp.id}"]`))||null;btn.setAttribute("aria-label","Show choices"+(lab?" for "+lab.childNodes[0].textContent.trim():""));
+    btn.innerHTML=`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
+    const panel=document.createElement("div");panel.className="cpanel";panel.id="cp"+(++comboSeq);panel.setAttribute("role","listbox");if(multi)panel.setAttribute("aria-multiselectable","true");panel.hidden=true;
+    wrap.append(btn,panel);
+    inp.setAttribute("role","combobox");inp.setAttribute("aria-autocomplete","list");inp.setAttribute("aria-expanded","false");inp.setAttribute("aria-controls",panel.id);
+    let browsing=false,silent=false;
+    const term=()=>multi?((inp.value.split(",").pop()||"").trim()):inp.value.trim();
+    const close=()=>{panel.hidden=true;inp.setAttribute("aria-expanded","false");wrap.classList.remove("open");browsing=false};wrap._close=close;
+    const paint=()=>{
+      const t=norm(term());let opts=all();
+      if(!browsing&&t)opts=opts.filter(o=>norm(o).includes(t)).sort((a,b)=>(norm(b).startsWith(t)?1:0)-(norm(a).startsWith(t)?1:0));
+      if(!browsing&&opts.length===1&&norm(opts[0])===t)opts=[];
+      if(!opts.length){close();return}
+      const picked=multi?splitList(inp.value).map(norm):[norm(inp.value)];
+      panel.innerHTML=(multi&&browsing?`<div class="chint">Tap to add or remove · ${picked.filter(Boolean).length} chosen</div>`:"")+opts.slice(0,80).map(o=>`<button type="button" role="option" class="copt" data-v="${esc(o)}" aria-selected="${picked.includes(norm(o))}">${esc(o)}</button>`).join("");
+      panel.hidden=false;inp.setAttribute("aria-expanded","true");wrap.classList.add("open");
+    };
+    const set=v=>{inp.value=v;silent=true;inp.dispatchEvent(new Event("input",{bubbles:true}));silent=false};
+    btn.addEventListener("pointerdown",e=>e.preventDefault());
+    btn.onclick=()=>{if(!panel.hidden){close();return}browsing=true;paint();if(document.activeElement!==inp&&matchMedia("(pointer:fine)").matches)inp.focus()};
+    inp.addEventListener("input",()=>{if(silent||document.activeElement!==inp)return;browsing=false;if(term())paint();else close()});
+    inp.addEventListener("blur",()=>setTimeout(()=>{if(!wrap.contains(document.activeElement))close()},180));
+    inp.addEventListener("keydown",e=>{
+      if(e.key==="Escape"&&!panel.hidden){e.stopPropagation();close()}
+      else if(e.key==="ArrowDown"){e.preventDefault();if(panel.hidden){browsing=!term();paint()}const f=$(".copt",panel);if(f)f.focus()}});
+    panel.addEventListener("keydown",e=>{const o=e.target.closest(".copt");if(!o)return;
+      if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();const os=$$(".copt",panel),i=os.indexOf(o)+(e.key==="ArrowDown"?1:-1);if(i<0)inp.focus();else if(os[i])os[i].focus()}
+      if(e.key==="Escape"){e.stopPropagation();close();inp.focus()}});
+    panel.addEventListener("pointerdown",e=>e.preventDefault());
+    panel.addEventListener("click",e=>{const o=e.target.closest(".copt");if(!o)return;const v=o.dataset.v;
+      if(!multi){set(v);close();return}
+      const list=splitList(inp.value);
+      if(!browsing&&list.length&&!inp.value.trim().endsWith(",")){list.pop();if(!list.some(x=>norm(x)===norm(v)))list.push(v)} // the half-typed word becomes the choice
+      else{const i=list.findIndex(x=>norm(x)===norm(v));if(i>=0)list.splice(i,1);else list.push(v)}
+      set(list.join(", "));browsing=true;paint()});
+  });
+}
 
 function openForm(b,capture,pre,after){
   const isNew=!b;const v=b?{...b}:{status:"TBR",rating:0,...(pre||{})};
@@ -796,15 +842,15 @@ function openForm(b,capture,pre,after){
    <form id="bookForm" novalidate>
     <fieldset class="fs"><legend>From the book</legend><div class="grid">
      ${inp("title","Title *","",'required')}
-     ${inp("author","Author","h full-sm",'list="dl-author"')}
+     ${inp("author","Author","h full-sm",'data-combo="author"')}
      <div class="f h full-sm" data-f="isbn"><label for="i-isbn">ISBN<span class="src"></span></label><div class="inrow"><input id="i-isbn" name="isbn" type="text" inputmode="numeric" value="${esc(v.isbn||"")}" autocomplete="off" placeholder="978…"><button type="button" class="btn" id="lookupBtn">Look up</button></div></div>
-     ${inp("series","Series","h full-sm",'list="dl-series"')}
+     ${inp("series","Series","h full-sm",'data-combo="series"')}
      ${inp("seriesNo","Series #","t",'inputmode="numeric"')}
      <div class="f t" data-f="cover"><label for="i-cover">Cover<span class="src"></span></label><select id="i-cover" name="cover"><option value=""></option><option>Paperback</option><option>Hardcover</option></select></div>
-     ${inp("publisher","Publisher (this edition)","h full-sm",'list="dl-publisher"')}
+     ${inp("publisher","Publisher (this edition)","h full-sm",'data-combo="publisher"')}
      ${inp("editionYear","Edition year","t",'inputmode="numeric"')}
-     ${inp("language","Language","t",'list="dl-language"')}
-     ${inp("special","Special edition details","",'list="dl-special" placeholder="Sprayed edges, dust jacket, folded cover…"')}
+     ${inp("language","Language","t",'data-combo="language"')}
+     ${inp("special","Special edition details","",'data-combo="special" data-multi placeholder="Sprayed edges, dust jacket, folded cover…"')}
      <div class="f marks"><span class="lbl">Highlight this copy</span><div class="markrow">
        <button type="button" class="marktog" id="mkSpecial" aria-pressed="false">${ICON.star}Special edition</button>
        <label class="sigsel">${ICON.sig}<span class="vh">Signed</span><select id="mkSigned" aria-label="Signed"><option value="">Not signed</option>${window.BCStats.SIGNED_TYPES.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label>
@@ -812,10 +858,10 @@ function openForm(b,capture,pre,after){
     </div></fieldset>
     <fieldset class="fs"><legend>About the work</legend><div class="grid">
      <div class="f firstrow"><button type="button" class="btn" id="firstBtn">Find 1st edition online</button><span class="small" id="firstStatus" role="status"></span></div>
-     ${inp("firstPublisher","First edition publisher","h full-sm",'list="dl-publisher"')}
+     ${inp("firstPublisher","First edition publisher","h full-sm",'data-combo="publisher"')}
      ${inp("firstYear","First edition year","t",'inputmode="numeric"')}
-     ${inp("genre","Genre","t",'list="dl-genre"')}
-     ${inp("subgenre","Subgenres","",'list="dl-sub" placeholder="Comma-separated, e.g. High Fantasy, Dragons"')}
+     ${inp("genre","Genre","t",'data-combo="genre"')}
+     ${inp("subgenre","Subgenres","",'data-combo="subgenre" data-multi placeholder="Choose several, or type them"')}
      ${inp("awards","Awards","",'placeholder="Hugo 1990; Locus 1990"')}
     </div></fieldset>
     <fieldset class="fs"><legend>My reading</legend><div class="grid">
@@ -823,15 +869,19 @@ function openForm(b,capture,pre,after){
      <div class="f h full-sm"><span class="lbl">Rating</span><div class="rate" id="rate">${[1,2,3,4,5].map(n=>`<button type="button" data-n="${n}" aria-label="${n} star${n>1?"s":""}" class="${n<=(+v.rating||0)?"":"off"}">★</button>`).join("")}</div></div>
      ${inp("dateRead","Date read","h full-sm",'placeholder="YYYY-MM"')}
      <div class="f h full-sm"><label for="i-priority">Priority to read</label><select id="i-priority" name="priority"><option value="">Normal</option><option value="High">High</option></select></div>
-     ${inp("location","Where it is","",'list="dl-location" placeholder="Room, shelf…"')}
+     ${inp("location","Where it is","",'data-combo="location" placeholder="Room, shelf…"')}
      <div class="f"><label for="i-comments">Comments</label><textarea id="i-comments" name="comments">${esc(v.comments||"")}</textarea></div>
     </div></fieldset>
-    ${datalist("dl-author",uniq("author"))}${datalist("dl-series",uniq("series"))}${datalist("dl-publisher",[...new Set([...uniq("publisher"),...uniq("firstPublisher")])].sort())}
-    ${datalist("dl-language",[...new Set(["English","Portuguese",...uniq("language")])])}${datalist("dl-genre",[...new Set([...GENRES,...uniq("genre")])].sort())}${datalist("dl-sub",SUBGENRES)}${datalist("dl-special",uniq("special"))}${datalist("dl-location",uniq("location"))}
    </form>
    <div id="dupArea"></div>
    <div class="actions"><span class="small left" id="formStatus"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="saveBtn">${isNew?"Add to shelf":"Save changes"}</button></div>`);
   $("#i-cover",s).value=v.cover||"";
+  const segs=k=>books.flatMap(x=>splitList(x[k]));
+  const sorted=a=>[...new Set(a.filter(Boolean).map(String))].sort((x,y)=>x.localeCompare(y));
+  enhanceCombos(s,{author:sorted(uniq("author")),series:sorted(uniq("series")),publisher:sorted([...uniq("publisher"),...uniq("firstPublisher")]),
+    language:[...new Set(["English","Portuguese",...sorted(uniq("language"))])],genre:sorted([...GENRES,...uniq("genre")]),
+    subgenre:sorted([...SUBGENRES,...segs("subgenre")]),special:sorted(["Sprayed edges","Dust jacket","Folded cover","Illustrated","Special edition","Signed",...segs("special")]),
+    location:sorted(uniq("location"))});
   // The two highlight controls read and write the "Special edition details" text, so the Sheet stays readable.
   const spIn=$("#i-special",s), mkSp=$("#mkSpecial",s), mkSg=$("#mkSigned",s);
   const syncMarks=()=>{const m=window.BCStats.marksOf(spIn.value);mkSp.setAttribute("aria-pressed",String(m.special));mkSg.value=m.signed;mkSg.closest(".sigsel").classList.toggle("on",!!m.signed)};
@@ -930,6 +980,7 @@ function openForm(b,capture,pre,after){
   $("#saveBtn",s).onclick=async()=>{
     const fd=Object.fromEntries(new FormData($("#bookForm",s)).entries());
     for(const k in fd)fd[k]=String(fd[k]).trim();
+    ["subgenre","special"].forEach(k=>{if(fd[k]!=null)fd[k]=splitList(fd[k]).join(", ")});
     const fs=$("#formStatus",s);fs.classList.remove("err");
     if(!fd.title){fs.textContent="Add a title before saving.";fs.classList.add("err");$("#i-title",s).focus();return}
     const rec={...(b||{}),...fd,status,rating,id:b?b.id:0};delete rec.hasPhoto;
@@ -1214,14 +1265,14 @@ function openCaseEditor(c){
   const letter=[..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].find(l=>!used.has("Bookcase "+l))||"";
   const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${c?"Edit bookcase":"New bookcase"}</div><h2>${c?esc(c.name):"Add a bookcase"}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
     <div class="grid">
-      <div class="f"><label for="ceRoom">Room</label><input id="ceRoom" type="text" maxlength="60" list="dl-rooms" autocomplete="off" value="${esc(room)}" placeholder="Living room, office…"></div>
+      <div class="f"><label for="ceRoom">Room</label><input id="ceRoom" type="text" maxlength="60" data-combo="room" autocomplete="off" value="${esc(room)}" placeholder="Living room, office…"></div>
       <div class="f"><label for="ceName">Bookcase name</label><input id="ceName" type="text" maxlength="60" autocomplete="off" value="${esc(c?c.name:"Bookcase "+letter)}"></div>
       <div class="f"><label for="ceN">Shelves</label><select id="ceN">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${(c?c.shelves.length:5)===i+1?"selected":""}>${i+1}</option>`).join("")}</select></div>
     </div>
     <p class="small muted">Shelf 1 is the top one. Several rooms or bookcases? Add each one separately.</p>
-    ${datalist("dl-rooms",rooms)}
     <p class="small err" id="ceMsg"></p>
     <div class="actions" id="ceActs">${c?`<button class="btn danger left" id="ceDel">Delete</button>`:""}<button class="btn" data-close>Cancel</button><button class="btn primary" id="ceSave">${c?"Save":"Add bookcase"}</button></div>`);
+  enhanceCombos(s,{room:rooms});
   const msg=$("#ceMsg",s);
   $("#ceSave",s).onclick=async e=>{
     const room=$("#ceRoom",s).value.trim(),name=$("#ceName",s).value.trim(),n=+$("#ceN",s).value;
@@ -1347,12 +1398,13 @@ function wireWhere(v,b){
 }
 
 /* photograph a shelf → Claude reads the spines → you check → saved */
-const SHELF_STEPS=[["The whole shelf","Stand straight in front of it. Long shelf? Start with the left half"],["Right half (optional)","Only for long shelves. Otherwise tap Done"]];
+const SHELF_PHOTOS=6;
+const SHELF_STEPS=[["Left end of the shelf","Stand straight in front of it. Short shelf? One photo of all of it, then Done"],["Next part, to the right","Overlap a book or two with the last photo · Done when you reach the end"]];
 function photographShelf(k){
   if(!hasClaude){toast("Shelf photos need the Anthropic key in your Google script.");return}
   if(!budgetLeft()){toast("This month’s Claude limit is reached. Add the books by hand for now.");return}
   closeSheet();
-  openCamera({steps:SHELF_STEPS,max:2,noIsbn:true,frame:"full"},r=>{if(r&&r.photos&&r.photos.length)reviewShelf(k,r.photos)});
+  openCamera({steps:SHELF_STEPS,max:SHELF_PHOTOS,noIsbn:true,frame:"full"},r=>{if(r&&r.photos&&r.photos.length)reviewShelf(k,r.photos)});
 }
 function copyCands(b){
   const wk=window.BCStats.workKey(b);
