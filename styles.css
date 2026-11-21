@@ -644,3 +644,13 @@ body.searching .fab{display:none}
 .seg2 button{flex:1;min-height:44px;border-radius:22px;border:1.5px solid var(--line);background:transparent;color:var(--ink);font-size:14px}
 .seg2 button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:600}
 .band .swatches[hidden]{display:none}
+/* photo editor: crop / straighten */
+.fxmodes{display:flex;align-self:center;background:rgba(255,255,255,.1);border-radius:22px;padding:3px;gap:3px}
+.fxmodes button{min-height:40px;min-width:110px;border:0;border-radius:19px;background:transparent;color:#DCE3DC;font-size:14px;font-weight:500}
+.fxmodes button[aria-pressed="true"]{background:#E8C46A;color:#2A1E07;font-weight:600}
+.fxbox .fxshade{fill:rgba(0,0,0,.5);fill-rule:evenodd}
+.fxbox polygon{fill:none}
+.fxbox.cropmode{cursor:move}
+.fxbox.cropmode .fxh::before{border-radius:3px}
+.thumbacts{display:flex;gap:8px;flex-wrap:wrap}
+.thumbacts .btn{min-height:40px}

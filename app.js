@@ -302,7 +302,7 @@ function openBook(id){
         :`<div class="loading" id="heroInner">Loading photo…</div>`}
       <button class="over back" id="bkBack" aria-label="Back to shelves">${ICON.back}</button>
       ${ribbonsHtml(b)}
-      <div class="herobar"><span class="hchip">${mode==="online"?`Online cover · ${srcName}`:mode==="photo"?(b.photoFixed?"Your photo · straightened":"Your photo"):"No cover yet"}</span><span class="hbtns">${mode==="photo"?`<button class="over hbtn" id="bkFix">${b.photoFixed?"Adjust":"Straighten"}</button>`:""}${mode==="none"?`<button class="over hbtn" id="bkPhoto">${ICON.cam}Add photo</button>`:""}<button class="over hbtn" id="bkCover">${mode==="none"?"Find cover":"Change cover"}</button></span></div>
+      <div class="herobar"><span class="hchip">${mode==="online"?`Online cover · ${srcName}`:mode==="photo"?(b.photoFixed?"Your photo · edited":"Your photo"):"No cover yet"}</span><span class="hbtns">${mode==="photo"?`<button class="over hbtn" id="bkFix">Edit photo</button>`:""}${mode==="none"?`<button class="over hbtn" id="bkPhoto">${ICON.cam}Add photo</button>`:""}<button class="over hbtn" id="bkCover">${mode==="none"?"Find cover":"Change cover"}</button></span></div>
     </div>
     <div class="band ${sp.light&&!pal?"light":""}">
       <div class="row"><span class="no">No. ${pad(b.id)}</span>${stars(b.rating)}</div>
@@ -348,14 +348,14 @@ function openBook(id){
     if(e.target.closest("#cpLink"))openLinkPicker(b);
     if(e.target.closest("#cpUnlink"))unlinkCopy(b,e.target.closest("#cpUnlink"));
   };
-  const bp=$("#bkPhoto",v);if(bp)bp.onclick=()=>openCamera({steps:COVER_STEPS,max:1},async r=>{
+  const bp=$("#bkPhoto",v);if(bp)bp.onclick=()=>openCamera({steps:COVER_STEPS,max:1},r=>{
     if(!r.photos.length)return;
-    const btn=$("#bkPhoto",v);btn.disabled=true;btn.innerHTML=`${ICON.cam}<span>Saving photo…</span>`;
-    try{
-      const img=await blobToB64(r.photos[0].blob);
-      const d=await api("photo_set",{id:b.id,image:img});
-      newPhotoTaken(b.id,r.photos[0].blob);upsertBook(d.book);toast("Photo saved");openBook(b.id);
-    }catch(e){btn.disabled=false;handleApiError(e,"Couldn’t save the photo");openBook(b.id)}
+    cropNewPhoto(b.title,r.photos[0].blob,async(shown,asTaken)=>{
+      if(!shown)return;
+      const btn=$("#bkPhoto",v);if(btn){btn.disabled=true;btn.innerHTML=`${ICON.cam}<span>Saving photo…</span>`}
+      try{await saveNewPhoto(b.id,shown,asTaken);toast("Photo saved");render();openBook(b.id)}
+      catch(e){handleApiError(e,"Couldn’t save the photo");openBook(b.id)}
+    });
   });
   $("#bkDel",v).onclick=()=>{
     const area=$("#delArea",v);
@@ -863,6 +863,7 @@ function openForm(b,capture,pre,after){
    ${photos.length?`<section class="photo">
      <div class="sectlabel">Your photos · tap one to make it the book’s photo</div>
      <div class="thumbs" id="thumbs">${photos.map((p,i)=>`<button type="button" class="thumb" data-i="${i}" aria-pressed="${i===0}" aria-label="Use photo ${i+1} as the book’s photo"><img src="${p.url}" alt=""><span class="lbl" ${i===0?"":"hidden"}>Cover</span></button>`).join("")}</div>
+     <div class="thumbacts"><button type="button" class="btn" id="cropBtn">Crop the cover photo</button></div>
      <div class="progress" id="prog"></div>
      <div class="legend"><span><span class="badge photo">photo</span> read from your photos</span><span><span class="badge catalog">catalog</span> from the ISBN</span><span><span class="badge online">online</span> found on the internet</span><span><span class="badge knowledge">check</span> Claude’s suggestion</span></div>
      <p class="budgetline" id="budgetLine">${esc(budgetText())}</p>
@@ -922,6 +923,17 @@ function openForm(b,capture,pre,after){
   $("#segStatus",s).onclick=e=>{const btn=e.target.closest("button");if(!btn)return;status=btn.dataset.v;$$("#segStatus button",s).forEach(x=>x.setAttribute("aria-pressed",String(x===btn)))};
   $("#rate",s).onclick=e=>{const btn=e.target.closest("button");if(!btn)return;const n=+btn.dataset.n;rating=rating===n?0:n;$$("#rate button",s).forEach(x=>x.classList.toggle("off",+x.dataset.n>rating))};
   const thumbs=$("#thumbs",s);
+  const cropBtn=$("#cropBtn",s);
+  if(cropBtn)cropBtn.onclick=()=>{
+    const i=coverIdx>=0?coverIdx:0,ph=photos[i];if(!ph)return;
+    cropNewPhoto($("#i-title",s).value||"Cover photo",ph.orig||ph.blob,(shown,asTaken)=>{
+      if(!shown)return;
+      if(asTaken){ph.orig=asTaken;ph.blob=shown}else if(ph.orig){ph.blob=ph.orig;ph.orig=null}
+      const img=$(`.thumb[data-i="${i}"] img`,s);if(img){const u=URL.createObjectURL(ph.blob);img.src=u;ph.url=u}
+      if(coverIdx<0){coverIdx=i;$$(".thumb",thumbs).forEach(x=>{const on=+x.dataset.i===i;x.setAttribute("aria-pressed",String(on));$(".lbl",x).hidden=!on})}
+      cropBtn.textContent=ph.orig?"Cropped ✓ · crop again":"Crop the cover photo";
+    });
+  };
   if(thumbs)thumbs.onclick=e=>{const t=e.target.closest(".thumb");if(!t)return;const i=+t.dataset.i;coverIdx=coverIdx===i?-1:i;
     $$(".thumb",thumbs).forEach(x=>{const on=+x.dataset.i===coverIdx;x.setAttribute("aria-pressed",String(on));$(".lbl",x).hidden=!on})};
 
@@ -1028,7 +1040,7 @@ function openForm(b,capture,pre,after){
       if(copyOf&&!copyOf.workId){try{await setWork([copyOf.id],rec.workId)}catch(e){toast("Saved, but linking the copies failed: "+e.message)}}
       if(coverIdx>=0&&photos[coverIdx]){
         fs.textContent="Saving the photo to your Drive…";
-        try{const pd=await api("photo_set",{id:saved.id,image:await blobToB64(photos[coverIdx].blob)});saved=upsertBook(pd.book);newPhotoTaken(saved.id,photos[coverIdx].blob)}
+        try{saved=await saveNewPhoto(saved.id,photos[coverIdx].blob,photos[coverIdx].orig||null)}
         catch(e){toast("Book saved, but the photo wasn’t: "+e.message)}
       }
       photos.forEach(p=>URL.revokeObjectURL(p.url));
@@ -1694,7 +1706,7 @@ function openCoverPicker(b,o={}){
     <form class="cpsearch" id="cpSearch"><input class="field" id="cpQ" type="search" placeholder="Search other words: title, author, publisher" value="${esc(query)}" autocomplete="off"><button class="btn" type="submit">Search</button></form>
     <div class="card cpphoto">${b.hasPhoto?`<img class="cpthumb" data-photo="${b.id}" alt="">`:`<span class="cpthumb none">${ICON.cam}</span>`}
       <span class="cptxt"><b>Your photo</b><span class="small muted">${b.hasPhoto?"Kept in your Drive. Show it instead of an online cover any time.":"Photograph your own copy."}</span></span>
-      <span class="cpbtns">${b.hasPhoto?`<button class="btn" id="cpFix">${b.photoFixed?"Adjust":"Straighten"}</button>`:""}${b.hasPhoto?`<button class="btn" id="cpUsePhoto" ${coverMode(b)==="photo"?"disabled":""}>${coverMode(b)==="photo"?"Shown":"Use it"}</button>`:""}<button class="btn" id="cpPhoto">${b.hasPhoto?"Retake":"Take photo"}</button></span></div>
+      <span class="cpbtns">${b.hasPhoto?`<button class="btn" id="cpFix">Edit</button>`:""}${b.hasPhoto?`<button class="btn" id="cpUsePhoto" ${coverMode(b)==="photo"?"disabled":""}>${coverMode(b)==="photo"?"Shown":"Use it"}</button>`:""}<button class="btn" id="cpPhoto">${b.hasPhoto?"Retake":"Take photo"}</button></span></div>
     <p class="small err" id="cpMsg"></p>
     <div class="actions">${b.coverUrl?`<button class="btn danger left" id="cpRemove">Remove online cover</button>`:""}${o.onSkip?`<button class="btn" id="cpSkip">Skip</button>`:`<button class="btn" id="cpCancel">Cancel</button>`}<button class="btn primary" id="cpUse" disabled>Use this cover</button></div>`);
   wireCoverImages(s);
@@ -1731,9 +1743,12 @@ function openCoverPicker(b,o={}){
   const rm=$("#cpRemove",s);if(rm)rm.onclick=async()=>{rm.disabled=true;try{const d=await api("covers_set",{items:[{id:b.id,url:""}]});(d.books||[]).forEach(upsertBook);toast("Online cover removed");done()}catch(e){rm.disabled=false;handleApiError(e,"Couldn’t remove")}};
   $("#cpPhoto",s).onclick=()=>{closeSheet();openCamera({steps:COVER_STEPS,max:1},async r=>{
     if(!r.photos.length){openCoverPicker(b,o);return}
-    try{const d=await api("photo_set",{id:b.id,image:await blobToB64(r.photos[0].blob)});newPhotoTaken(b.id,r.photos[0].blob);let nb=upsertBook(d.book);
-      if(nb.coverUrl&&nb.coverPref!=="photo")nb=await quickSave(nb,{coverPref:"photo"});toast("Photo saved");if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}}
-    catch(e){handleApiError(e,"Couldn’t save the photo")}
+    cropNewPhoto(b.title,r.photos[0].blob,async(shown,asTaken)=>{
+      if(!shown){openCoverPicker(books.find(x=>x.id===b.id)||b,o);return}
+      try{let nb=await saveNewPhoto(b.id,shown,asTaken);
+        if(nb.coverUrl&&nb.coverPref!=="photo")nb=await quickSave(nb,{coverPref:"photo"});toast("Photo saved");if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}}
+      catch(e){handleApiError(e,"Couldn’t save the photo")}
+    });
   })};
   if(cands){picked=cands.findIndex(c=>c.exact);paint()}else search("");
 }
@@ -1870,62 +1885,125 @@ async function saveStraight(b,blob){
   setCachedPhoto(b.id,blob);return upsertBook(d.book);
 }
 
-/* the editor: drag four dots onto the corners of the cover */
+/* the photo editor: Crop (a straight rectangle) or Straighten (four free corners) */
 function closeFix(){const v=$(".fixv");if(v)v.remove();syncScroll()}
-async function openStraighten(b,o={}){
+const toRect=c=>{const xs=c.map(p=>p[0]),ys=c.map(p=>p[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]};
+const isRect=c=>Math.abs(c[0][1]-c[1][1])<1e-6&&Math.abs(c[3][1]-c[2][1])<1e-6&&Math.abs(c[0][0]-c[3][0])<1e-6&&Math.abs(c[1][0]-c[2][0])<1e-6;
+const FULL_RECT=[[.03,.03],[.97,.03],[.97,.97],[.03,.97]];
+// A plain crop keeps every pixel sharp; a straightened one is redrawn flat.
+async function editedBlob(img,corners,better,mode){
+  let cv;
+  if(mode==="crop"||isRect(corners)){const r=toRect(corners),W=img.naturalWidth,H=img.naturalHeight,sx=r[0][0]*W,sy=r[0][1]*H,sw=(r[1][0]-r[0][0])*W,sh=(r[2][1]-r[0][1])*H,k=Math.min(1,1568/Math.max(sw,sh));
+    cv=document.createElement("canvas");cv.width=Math.max(10,Math.round(sw*k));cv.height=Math.max(10,Math.round(sh*k));cv.getContext("2d").drawImage(img,sx,sy,sw,sh,0,0,cv.width,cv.height)}
+  else cv=straighten(img,corners,1400);
+  if(better)enhance(cv);
+  return canvasJpeg(cv);
+}
+// o: {title, src (image url), mode, corners, better, canFind (book id for Claude), restore, saveLabel, onSave(img,corners,better,mode) → Promise, onClose}
+async function openPhotoEditor(o){
   closeFix();
-  let corners=(o.corners||DEFAULT_CORNERS).map(p=>p.slice()),img=null,better=o.better!==false,prevT=0;
-  const v=document.createElement("div");v.className="fixv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Straighten photo");
+  let mode=o.mode||"crop",corners=(o.corners||(mode==="crop"?FULL_RECT:DEFAULT_CORNERS)).map(p=>p.slice()),better=o.better!==false,img=null,prevT=0;
+  if(mode==="crop")corners=toRect(corners);
+  const v=document.createElement("div");v.className="fixv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Edit photo");
   v.innerHTML=`<div class="fixin">
-    <div class="fixtop"><button class="x" id="fxX" aria-label="Close">×</button><div class="grow1"><div class="eyebrow">${esc(b.title)}</div><h2>Straighten your photo</h2></div></div>
+    <div class="fixtop"><button class="x" id="fxX" aria-label="Close">×</button><div class="grow1"><div class="eyebrow">${esc(o.title||"")}</div><h2>Edit your photo</h2></div></div>
+    <div class="fxmodes" role="group" aria-label="How to cut the photo"><button data-mode="crop">Crop</button><button data-mode="straighten">Straighten</button></div>
     <div class="fixstage" id="fxStage"><div class="notice"><span>Loading your photo…</span></div></div>
-    <p class="fixmsg" id="fxMsg">Drag the four dots onto the corners of the cover.</p>
-    <div class="fixrow"><div class="fixprev"><canvas id="fxPrev" aria-label="Preview of the straightened cover" role="img"></canvas><span>Result</span></div>
+    <p class="fixmsg" id="fxMsg"></p>
+    <div class="fixrow"><div class="fixprev"><canvas id="fxPrev" aria-label="Preview of the result" role="img"></canvas><span>Result</span></div>
       <div class="fixopts"><label class="fxtog"><input type="checkbox" id="fxBetter" ${better?"checked":""}> Better colours</label>
-        ${hasClaude?`<button class="btn" id="fxAuto">Find the corners</button>`:""}<button class="btn" id="fxReset">Reset</button></div></div>
-    <div class="actions">${b.photoFixed&&!o.batch?`<button class="btn left" id="fxRestore">Back to the original</button>`:""}<button class="btn" id="fxCancel">Cancel</button><button class="btn primary" id="fxSave" disabled>${o.batch?"Use these corners":"Save straightened photo"}</button></div>
+        ${o.canFind&&hasClaude?`<button class="btn" id="fxAuto">Find the corners</button>`:""}<button class="btn" id="fxReset">Reset</button></div></div>
+    <div class="actions">${o.restore?`<button class="btn left" id="fxRestore">Back to the original</button>`:""}${o.skipLabel?`<button class="btn" id="fxSkip">${esc(o.skipLabel)}</button>`:`<button class="btn" id="fxCancel">Cancel</button>`}<button class="btn primary" id="fxSave" disabled>${esc(o.saveLabel||"Save")}</button></div>
   </div>`;
   document.body.append(v);syncScroll();
   const msg=$("#fxMsg",v),stage=$("#fxStage",v),prev=$("#fxPrev",v);
   const close=()=>{closeFix();if(o.onClose)o.onClose()};
-  $("#fxX",v).onclick=close;$("#fxCancel",v).onclick=close;
-  const rs=$("#fxRestore",v);if(rs)rs.onclick=async()=>{rs.disabled=true;try{const d=await api("photo_restore",{id:b.id});if(photoCache.has(b.id)){URL.revokeObjectURL(photoCache.get(b.id));photoCache.delete(b.id)}if(origCache.has(b.id)){photoCache.set(b.id,origCache.get(b.id));origCache.delete(b.id)}upsertBook(d.book);toast("Back to the original photo");closeFix();render();if(o.onSaved)o.onSaved();else if($(".book"))openBook(b.id)}catch(e){rs.disabled=false;handleApiError(e,"Couldn’t restore")}};
-  try{const u=await originalPhoto(b);if(!u)throw new Error("no photo");img=await loadImg(u)}
-  catch(e){stage.innerHTML=`<div class="notice"><span>Couldn’t load your photo.</span></div>`;return}
+  $("#fxX",v).onclick=close;const cc=$("#fxCancel",v);if(cc)cc.onclick=close;
+  const sk=$("#fxSkip",v);if(sk)sk.onclick=()=>{closeFix();o.onSkip()};
+  const rs=$("#fxRestore",v);if(rs)rs.onclick=async()=>{rs.disabled=true;try{await o.restore();closeFix()}catch(e){rs.disabled=false;handleApiError(e,"Couldn’t restore")}};
+  const hint=()=>{msg.textContent=mode==="crop"?"Drag the corners, or the frame itself, to keep just the cover.":"Drag the four dots onto the corners of the cover."};
+  const paintModes=()=>$$(".fxmodes button",v).forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.mode===mode)));
+  paintModes();hint();
+  try{img=await loadImg(await o.src());}catch(e){stage.innerHTML=`<div class="notice"><span>Couldn’t load your photo.</span></div>`;return}
   if(!v.isConnected)return;
-  stage.innerHTML=`<div class="fxbox" id="fxBox"><img src="${img.src}" alt="Your photo of ${esc(b.title)}"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon id="fxPoly"/></svg>
+  stage.innerHTML=`<div class="fxbox" id="fxBox"><img src="${img.src}" alt="Your photo"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path class="fxshade" id="fxShade"/><polygon id="fxPoly"/></svg>
     ${["Top-left","Top-right","Bottom-right","Bottom-left"].map((l,i)=>`<button class="fxh" data-k="${i}" aria-label="${l} corner: drag, or use the arrow keys"></button>`).join("")}</div>`;
-  const box=$("#fxBox",v),poly=$("#fxPoly",v),hs=$$(".fxh",v);
-  const small=(()=>{const c=document.createElement("canvas"),s=Math.min(1,900/Math.max(img.naturalWidth,img.naturalHeight));c.width=Math.round(img.naturalWidth*s);c.height=Math.round(img.naturalHeight*s);c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c})();
-  const preview=()=>{const cv=straighten(small,corners,260);if(better)enhance(cv);prev.width=cv.width;prev.height=cv.height;prev.getContext("2d").drawImage(cv,0,0)};
-  const place=()=>{hs.forEach((h,i)=>{h.style.left=corners[i][0]*100+"%";h.style.top=corners[i][1]*100+"%"});poly.setAttribute("points",corners.map(p=>`${p[0]*100},${p[1]*100}`).join(" "))};
+  const box=$("#fxBox",v),poly=$("#fxPoly",v),shade=$("#fxShade",v),hs=$$(".fxh",v);
+  const small=(()=>{const c=document.createElement("canvas"),k=Math.min(1,900/Math.max(img.naturalWidth,img.naturalHeight));c.width=Math.round(img.naturalWidth*k);c.height=Math.round(img.naturalHeight*k);c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c})();
+  const preview=()=>{let cv;
+    if(mode==="crop"){const r=toRect(corners),sw=(r[1][0]-r[0][0])*small.width,sh=(r[2][1]-r[0][1])*small.height,k=260/Math.max(sw,sh);cv=document.createElement("canvas");cv.width=Math.max(4,Math.round(sw*k));cv.height=Math.max(4,Math.round(sh*k));cv.getContext("2d").drawImage(small,r[0][0]*small.width,r[0][1]*small.height,sw,sh,0,0,cv.width,cv.height)}
+    else cv=straighten(small,corners,260);
+    if(better)enhance(cv);prev.width=cv.width;prev.height=cv.height;prev.getContext("2d").drawImage(cv,0,0)};
+  const pts=()=>corners.map(p=>`${p[0]*100},${p[1]*100}`).join(" ");
+  const place=()=>{hs.forEach((h,i)=>{h.style.left=corners[i][0]*100+"%";h.style.top=corners[i][1]*100+"%"});poly.setAttribute("points",pts());
+    shade.setAttribute("d",`M0,0H100V100H0Z M${corners.map(p=>`${p[0]*100},${p[1]*100}`).join(" L")}Z`);box.classList.toggle("cropmode",mode==="crop")};
   const later=()=>{clearTimeout(prevT);prevT=setTimeout(preview,60)};
+  const MIN=.06,cl=x=>Math.max(0,Math.min(1,x));
+  // In crop mode a corner moves its two neighbours too, so the frame stays a rectangle.
+  const setCorner=(k,x,y)=>{x=cl(x);y=cl(y);
+    if(mode!=="crop"){corners[k]=[x,y];return}
+    const r=toRect(corners);let [x0,y0]=r[0],[x1,y1]=r[2];
+    if(k===0||k===3)x0=Math.min(x,x1-MIN);else x1=Math.max(x,x0+MIN);
+    if(k===0||k===1)y0=Math.min(y,y1-MIN);else y1=Math.max(y,y0+MIN);
+    corners=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]]};
   place();preview();$("#fxSave",v).disabled=false;
   box.addEventListener("pointerdown",e=>{
-    const h=e.target.closest(".fxh");if(!h)return;e.preventDefault();h.setPointerCapture(e.pointerId);h.classList.add("drag");const k=+h.dataset.k;
-    const mv=ev=>{const r=box.getBoundingClientRect();corners[k]=[Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(ev.clientY-r.top)/r.height))];place()};
-    const up=()=>{h.classList.remove("drag");h.removeEventListener("pointermove",mv);h.removeEventListener("pointerup",up);h.removeEventListener("pointercancel",up);preview()};
-    h.addEventListener("pointermove",mv);h.addEventListener("pointerup",up);h.addEventListener("pointercancel",up);
+    const h=e.target.closest(".fxh"),r0=box.getBoundingClientRect();
+    if(!h&&mode!=="crop")return;
+    e.preventDefault();
+    if(h){h.setPointerCapture(e.pointerId);h.classList.add("drag");const k=+h.dataset.k;
+      const mv=ev=>{const r=box.getBoundingClientRect();setCorner(k,(ev.clientX-r.left)/r.width,(ev.clientY-r.top)/r.height);place()};
+      const up=()=>{h.classList.remove("drag");h.removeEventListener("pointermove",mv);h.removeEventListener("pointerup",up);h.removeEventListener("pointercancel",up);preview()};
+      h.addEventListener("pointermove",mv);h.addEventListener("pointerup",up);h.addEventListener("pointercancel",up);return}
+    // crop mode: drag inside the frame to move it
+    const px=(e.clientX-r0.left)/r0.width,py=(e.clientY-r0.top)/r0.height,r=toRect(corners);
+    if(px<r[0][0]||px>r[1][0]||py<r[0][1]||py>r[2][1])return;
+    box.setPointerCapture(e.pointerId);const start=corners.map(p=>p.slice());
+    const mv=ev=>{const rr=box.getBoundingClientRect();let dx=(ev.clientX-e.clientX)/rr.width,dy=(ev.clientY-e.clientY)/rr.height;
+      dx=Math.max(-start[0][0],Math.min(1-start[1][0],dx));dy=Math.max(-start[0][1],Math.min(1-start[2][1],dy));corners=start.map(([x,y])=>[x+dx,y+dy]);place()};
+    const up=()=>{box.removeEventListener("pointermove",mv);box.removeEventListener("pointerup",up);box.removeEventListener("pointercancel",up);preview()};
+    box.addEventListener("pointermove",mv);box.addEventListener("pointerup",up);box.addEventListener("pointercancel",up);
   });
   box.addEventListener("keydown",e=>{const h=e.target.closest(".fxh");if(!h)return;const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(!d)return;e.preventDefault();
-    const k=+h.dataset.k,st=e.shiftKey?.02:.004;corners[k]=[Math.max(0,Math.min(1,corners[k][0]+d[0]*st)),Math.max(0,Math.min(1,corners[k][1]+d[1]*st))];place();later()});
+    const k=+h.dataset.k,st=e.shiftKey?.02:.004;setCorner(k,corners[k][0]+d[0]*st,corners[k][1]+d[1]*st);place();later()});
+  $(".fxmodes",v).onclick=e=>{const b2=e.target.closest("[data-mode]");if(!b2||b2.dataset.mode===mode)return;mode=b2.dataset.mode;if(mode==="crop")corners=toRect(corners);paintModes();hint();if(box)place();preview()};
   $("#fxBetter",v).onchange=e=>{better=e.target.checked;preview()};
-  $("#fxReset",v).onclick=()=>{corners=DEFAULT_CORNERS.map(p=>p.slice());place();preview();msg.textContent="Drag the four dots onto the corners of the cover."};
+  $("#fxReset",v).onclick=()=>{corners=(mode==="crop"?FULL_RECT:DEFAULT_CORNERS).map(p=>p.slice());place();preview();hint()};
   const auto=async()=>{const bt=$("#fxAuto",v);if(!bt)return;
     if(!budgetLeft()){msg.textContent="This month’s Claude limit is reached: drag the dots yourself.";return}
     bt.disabled=true;msg.textContent="Claude is finding the corners… (a few seconds, about $0.002)";
-    try{const c=await findCorners([b.id]);if(!v.isConnected)return;if(c[b.id]){corners=c[b.id];place();preview();msg.textContent="Corners found. Drag a dot if it’s not exactly on the corner."}else msg.textContent="Claude couldn’t find the cover: drag the dots yourself."}
+    try{const c=await findCorners([o.canFind]);if(!v.isConnected)return;
+      if(c[o.canFind]){corners=c[o.canFind];mode="straighten";paintModes();place();preview();msg.textContent="Corners found. Drag a dot if it’s not exactly on the corner."}else msg.textContent="Claude couldn’t find the cover: drag the dots yourself."}
     catch(e){msg.textContent=(e.message||"Couldn’t find the corners")+". Drag the dots yourself."}
     bt.disabled=false};
   const ab=$("#fxAuto",v);if(ab)ab.onclick=auto;
-  if(!o.corners&&hasClaude&&budgetLeft())auto();
-  $("#fxSave",v).onclick=async e=>{
-    if(o.batch){closeFix();o.onCorners(corners,better);return}
-    const bt=e.target;bt.disabled=true;bt.textContent="Saving…";
-    try{const blob=await makeStraight(img,corners,better);await saveStraight(b,blob);toast("Straightened photo saved · the original is kept");closeFix();render();
-      if(o.onSaved)o.onSaved();else if($(".book"))openBook(b.id)}
-    catch(err){bt.disabled=false;bt.textContent="Save straightened photo";handleApiError(err,"Couldn’t save")}
-  };
+  if(o.autoFind&&o.canFind&&hasClaude&&budgetLeft())auto();
+  $("#fxSave",v).onclick=async e=>{const bt=e.target;bt.disabled=true;const lab=bt.textContent;bt.textContent="Saving…";
+    try{await o.onSave(img,corners.map(p=>p.slice()),better,mode);closeFix()}catch(err){bt.disabled=false;bt.textContent=lab;handleApiError(err,"Couldn’t save")}};
+}
+// A photo already saved for a book: the editor works from the photo as taken, which is always kept.
+function openStraighten(b,o={}){
+  const after=()=>{render();if(o.onSaved)o.onSaved();else if($(".book"))openBook(b.id)};
+  openPhotoEditor({title:b.title,src:()=>originalPhoto(b),mode:o.mode||"straighten",corners:o.corners,better:o.better,canFind:b.id,autoFind:!o.corners&&!o.batch,
+    saveLabel:o.batch?"Use this":"Save",onClose:o.onClose,
+    restore:b.photoFixed&&!o.batch?async()=>{const d=await api("photo_restore",{id:b.id});if(photoCache.has(b.id)){URL.revokeObjectURL(photoCache.get(b.id));photoCache.delete(b.id)}if(origCache.has(b.id)){photoCache.set(b.id,origCache.get(b.id));origCache.delete(b.id)}upsertBook(d.book);toast("Back to the original photo");after()}:null,
+    onSave:async(img,corners,better,mode)=>{
+      if(o.batch){o.onCorners(corners,better,mode);return}
+      await saveStraight(b,await editedBlob(img,corners,better,mode));toast("Photo saved · the original is kept");after()}});
+}
+// A photo just taken: crop it before it's saved. The photo as taken is kept too when you change it.
+function cropNewPhoto(title,blob,onDone){
+  const url=URL.createObjectURL(blob);
+  openPhotoEditor({title,src:async()=>url,mode:"crop",better:true,saveLabel:"Use this",skipLabel:"Use as taken",
+    onSkip:()=>onDone(blob,null),onClose:()=>onDone(null,null),
+    onSave:async(img,corners,better,mode)=>{const out=await editedBlob(img,corners,better,mode);onDone(out,blob)}});
+}
+// Save a new photo for a book: the edited one is shown, the one as taken is kept as the original.
+async function saveNewPhoto(id,shown,asTaken){
+  let d=await api("photo_set",{id,image:await blobToB64(asTaken||shown)});
+  newPhotoTaken(id,asTaken||shown);
+  if(asTaken){const b=upsertBook(d.book);d={book:await saveStraight(b,shown)};return d.book}
+  return upsertBook(d.book);
 }
 
 /* straighten every photo at once */
