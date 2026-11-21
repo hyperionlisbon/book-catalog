@@ -664,3 +664,4 @@ body.searching .fab{display:none}
 .donebar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--paper);border-radius:12px;padding:8px 8px 8px 14px}
 .donebar.isdone{background:var(--cat-bg);color:var(--cat)}
 .donebar .btn{min-height:40px}
+.shhint{margin:-4px 0 0}
