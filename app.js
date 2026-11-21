@@ -41,7 +41,7 @@ const ICON={
   star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
-const APP_VERSION="22";
+const APP_VERSION="23";
 let toastT;
 function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
@@ -316,6 +316,8 @@ function openBook(id){
     <div class="book-body">
       ${b.coverUrl&&b.hasPhoto?`<div class="card covershown"><div class="sectlabel">Cover shown</div><div class="seg2"><button data-pref="" aria-pressed="${mode==="online"}">Online cover</button><button data-pref="photo" aria-pressed="${mode==="photo"}">My photo</button></div><div class="small muted">Both are kept: switch any time.</div></div>`:""}
       ${b.comments?`<p class="quote">“${esc(b.comments)}”</p>`:""}
+      ${b.synopsis?`<section class="card synopsis"><h3 class="sectlabel">Synopsis</h3><p class="syntext" id="synText">${esc(b.synopsis)}</p><button class="linkbtn" id="synMore" hidden aria-expanded="false">Read more</button></section>`
+        :owned(b)?`<section class="card synopsis none"><span class="small muted">No synopsis yet.</span><button class="btn" id="synFind">Find it online</button></section>`:""}
       <div class="facts">
         ${fact("Genre",b.genre,b.subgenre)}
         ${fact("Edition",[b.publisher,b.editionYear].filter(Boolean).join(", "),[b.cover,b.special].filter(Boolean).join(" · "))}
@@ -332,6 +334,13 @@ function openBook(id){
   document.body.append(v);syncScroll();
   if(pal){const bi=$(".book-inner",v);bi.style.setProperty("--sp-bg",pal[0]);bi.style.setProperty("--sp-fg",pal[2]);applyPalette(bi,b)}
   wireCoverImages(v);
+  const stx=$("#synText",v),smore=$("#synMore",v);
+  if(stx&&smore){requestAnimationFrame(()=>{if(stx.scrollHeight>stx.clientHeight+4)smore.hidden=false});
+    smore.onclick=()=>{const open=stx.classList.toggle("open");smore.textContent=open?"Show less":"Read more";smore.setAttribute("aria-expanded",String(open))}}
+  const sf2=$("#synFind",v);if(sf2)sf2.onclick=async()=>{sf2.disabled=true;sf2.textContent="Looking…";
+    const r=await findSynopsis(b).catch(()=>null);
+    if(!r){sf2.disabled=false;sf2.textContent="Find it online";toast("No synopsis found online. You can type one with Edit book.");return}
+    try{await quickSave(books.find(x=>x.id===b.id)||b,{synopsis:r.text});toast(`Synopsis found on ${r.src}`);openBook(b.id)}catch(e){sf2.disabled=false;sf2.textContent="Find it online";handleApiError(e,"Couldn’t save")}};
   const fx=$("#bkFix",v);if(fx)fx.onclick=()=>openStraighten(books.find(x=>x.id===b.id)||b);
   const showSwatches=p=>{const sw=$(".swatches",v);if(!sw||!p)return;$$("i",sw).forEach((x,i)=>x.style.background=p[i]);sw.hidden=false};
   if(pal)showSwatches(pal);
@@ -894,6 +903,8 @@ function openForm(b,capture,pre,after){
      ${inp("genre","Genre","t",'data-combo="genre"')}
      ${inp("subgenre","Subgenres","",'data-combo="subgenre" data-multi placeholder="Choose several, or type them"')}
      ${inp("awards","Awards","",'placeholder="Hugo 1990; Locus 1990"')}
+     <div class="f" data-f="synopsis"><label for="i-synopsis">Synopsis<span class="src"></span></label><textarea id="i-synopsis" name="synopsis" placeholder="Found online when you add a book, or type it">${esc(v.synopsis||"")}</textarea>
+       <div class="synrow"><button type="button" class="btn" id="synBtn">Find synopsis online</button><span class="small muted" id="synStatus" role="status"></span></div></div>
     </div></fieldset>
     <fieldset class="fs"><legend>My reading</legend><div class="grid">
      <div class="f"><span class="lbl">Status</span><div class="seg" id="segStatus">${["TBR","Reading","Read","DNF","Wishlist"].map(x=>`<button type="button" data-v="${x}" aria-pressed="${v.status===x}">${statusLabel(x)}</button>`).join("")}</div></div>
@@ -940,12 +951,12 @@ function openForm(b,capture,pre,after){
     $$(".thumb",thumbs).forEach(x=>{const on=+x.dataset.i===coverIdx;x.setAttribute("aria-pressed",String(on));$(".lbl",x).hidden=!on})};
 
   const dirty=new Set(), rank={};
-  $$(".f[data-f] input,.f[data-f] select",s).forEach(el=>el.addEventListener("input",()=>{const f=el.closest(".f");dirty.add(f.dataset.f);f.classList.remove("src-photo","src-catalog","src-online","src-knowledge");$(".src",f).innerHTML=""}));
+  $$(".f[data-f] input,.f[data-f] select,.f[data-f] textarea",s).forEach(el=>el.addEventListener("input",()=>{const f=el.closest(".f");dirty.add(f.dataset.f);f.classList.remove("src-photo","src-catalog","src-online","src-knowledge");$(".src",f).innerHTML=""}));
   const apply=(k,val,src)=>{
     if(val==null||val==="")return;val=String(val).trim();if(!val)return;
     const f=$(`.f[data-f="${k}"]`,s);if(!f||dirty.has(k))return;
     if((rank[k]||0)>=RANK[src])return;
-    const el=$("input,select",f);
+    const el=$("input,select,textarea",f);
     if(el.tagName==="SELECT"&&![...el.options].some(o=>o.value===val))return;
     el.value=val;rank[k]=RANK[src];
     f.classList.remove("src-photo","src-catalog","src-online","src-knowledge");f.classList.add("src-"+src);
@@ -961,7 +972,7 @@ function openForm(b,capture,pre,after){
     const c=await lookupIsbn(d);
     if(c){["title","author","publisher","editionYear","language","isbn"].forEach(k=>apply(k,c[k],"catalog"));setProg("cat","ok",`Found in the free book catalogs (ISBN ${d})`)}
     else setProg("cat","err",`ISBN ${d} isn’t in the free catalogs`);
-    if(isNew)runFirst(true);
+    if(isNew){runFirst(true);runSyn(true)}
   };
   // First edition year and publisher: what the photos show wins; otherwise it's looked up online (free).
   let firstKey="",firstSeq=0;
@@ -986,7 +997,23 @@ function openForm(b,capture,pre,after){
     setProg("first","ok",`First edition found online (${r.source}): ${what}`);
   };
   $("#firstBtn",s).onclick=()=>runFirst(false);
-  if(isNew){let t;["title","author"].forEach(k=>$(`#i-${k}`,s).addEventListener("change",()=>{clearTimeout(t);t=setTimeout(()=>runFirst(true),300)}))}
+  // Synopsis: filled from the internet when it's empty; never over what you typed.
+  let synKey="",synSeq=0;
+  const runSyn=async auto=>{
+    const val=k=>($(`#i-${k}`,s)||{}).value?.trim()||"";
+    const pb={title:val("title"),author:val("author"),isbn:val("isbn"),language:val("language")};const st2=$("#synStatus",s);
+    if(!pb.title&&!isbnDigits(pb.isbn).length){if(!auto)st2.textContent="Add the title (or ISBN) first.";return}
+    const empty=!dirty.has("synopsis")&&(rank.synopsis?rank.synopsis<RANK.online:!val("synopsis"));
+    if(auto&&!empty)return;
+    const key=[pb.title,pb.author,pb.isbn].join("|");if(auto&&key===synKey)return;synKey=key;const seq=++synSeq;
+    st2.textContent="Looking for the synopsis online…";
+    const r=await findSynopsis(pb).catch(()=>null);if(seq!==synSeq||!s.isConnected)return;
+    if(!r){st2.textContent="No synopsis found online.";return}
+    if(empty)apply("synopsis",r.text,"online");
+    st2.textContent=empty?`Found on ${r.src}.`:`Found on ${r.src}, but you already have one: clear the box first to use it.`;
+  };
+  $("#synBtn",s).onclick=()=>runSyn(false);
+  if(isNew){let t;["title","author"].forEach(k=>$(`#i-${k}`,s).addEventListener("change",()=>{clearTimeout(t);t=setTimeout(()=>{runFirst(true);runSyn(true)},300)}))}
   $("#lookupBtn",s).onclick=async e=>{
     const d=isbnDigits($("#i-isbn",s).value)[0];const fs=$("#formStatus",s);
     if(!d){fs.textContent="Type a 10- or 13-digit ISBN first.";return}
@@ -1010,7 +1037,7 @@ function openForm(b,capture,pre,after){
         Object.keys(r).forEach(k=>{if(k!=="from")apply(k,r[k],from[k]==="photo"?"photo":"knowledge")});
         if(d.budget){budget=d.budget;store.set("bc-budget",budget);const bl=$("#budgetLine",s);if(bl)bl.textContent=budgetText()}
         setProg("ai","ok",`Claude read the photos${d.costUsd?` (cost about $${(+d.costUsd).toFixed(3)})`:""}. Check the highlighted fields.`);
-        if(r.isbn&&!lookedUp)runLookup(isbnDigits(r.isbn)[0]);else runFirst(true);
+        if(r.isbn&&!lookedUp)runLookup(isbnDigits(r.isbn)[0]);else{runFirst(true);runSyn(true)}
       }catch(e){
         if(e.budget){budget=e.budget;store.set("bc-budget",budget)}
         setProg("ai","err",e.code==="unauthorized"?"Access key not accepted. Reconnect in Settings.":(e.message||"Claude couldn’t read the photos."));
@@ -1104,6 +1131,7 @@ function openStats(){
     if(e.target.closest("#stBack")){closeStats();return}
     if(e.target.closest("#stSugg")){openCopySuggestions();return}
     if(e.target.closest("#phFix")){openFixRun();return}
+    if(e.target.closest("#synRun")){openSynRun();return}
     if(e.target.closest("#phSession")){openPhotoSession((v._base||[]).filter(b=>!b.hasPhoto));return}
     if(e.target.closest("#recGo")){runRecommend(v);return}
     const ws=e.target.closest("[data-wishseries]");if(ws){addMissingToWishlist(ws.dataset.wishseries,ws);return}
@@ -1196,6 +1224,8 @@ function renderStats(v){
        return `<div class="mrow"><button class="mlink" data-d="${id}"><span class="ms">${esc(g.series)}</span><span class="mm">Missing ${g.missing.map(x=>"#"+x.n+(x.wish?" (on wishlist)":"")).join(", ")}</span></button>${g.missing.some(x=>!x.wish)?`<button class="btn small-btn" data-wishseries="${esc(g.series)}">Add to wishlist</button>`:""}</div>`}).join("")}</div>`:`<p class="vnote">No gaps in your numbered series.</p>`}</section>
    <section class="vcard"><h2>Where they are</h2>${S.locations.length?hbars(S.locations,"Location",(b,x)=>b.location===x.key):""}
      ${S.noLocation?`<button class="btn" data-d="${reg(T("No location yet"),base.filter(b=>!b.location))}">${S.noLocation} book${S.noLocation===1?" has":"s have"} no location yet</button>`:""}</section>
+   <section class="vcard"><h2>Synopses</h2>${(()=>{const own=books.filter(owned),n=own.filter(b=>String(b.synopsis||"").trim()).length;
+     return `<p class="sub">${n} of ${own.length} books have a synopsis</p><div class="prow done"><span class="trk"><span class="fill" data-w="${own.length?(100*n/own.length).toFixed(1):0}"></span></span></div>${own.length-n?`<button class="btn" id="synRun">Find the missing ${own.length-n} online (free)</button>`:""}`})()}</section>
    <section class="vcard"><h2>Photos</h2><p class="sub">${S.withPhoto} of ${S.total} books have a photo of your copy</p>
      <div class="prow done"><span class="trk"><span class="fill" data-w="${S.total?(100*S.withPhoto/S.total).toFixed(1):0}"></span></span></div>
      ${S.total-S.withPhoto?`<button class="btn primary" id="phSession">${ICON.cam}Start a photo session (${S.total-S.withPhoto} to go)</button>`:""}
@@ -1699,7 +1729,7 @@ function coverFaceHtml(b,mode){
   if(mode==="online")return `<img class="cimg" src="${esc(b.coverUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback="${b.id}">`;
   if(mode==="photo")return `<img class="cimg mine" alt="" data-photo="${b.id}">`;
   const lw=Math.max(...String(b.title||"").split(/\s+/).map(w=>w.length),0);
-  return `<span class="cph ${colorCls(b)}${lw>12?" xs":lw>8?" s":""}"><i>${esc(b.title)}</i>${b.author?`<em>${esc(b.author)}</em>`:""}</span>`;
+  return `<span class="cph ${colorCls(b)}${lw>11?" xs":lw>7?" s":""}"><i>${esc(b.title)}</i>${b.author?`<em>${esc(b.author)}</em>`:""}</span>`;
 }
 // Load photos when they scroll into view; swap broken online covers for the designed stand-in.
 let photoObserver=null;
@@ -2087,6 +2117,63 @@ async function saveFixRun(){
     paintFixRun();
   }
   fixRun.running=false;toast(`${n} photo${n===1?"":"s"} straightened · the originals are kept`);render();paintFixRun();
+}
+
+/* ---------- synopsis: from Google Books / Open Library (free) ---------- */
+function plainText(html){
+  const s=String(html||"").replace(/<\s*br\s*\/?>/gi,"\n").replace(/<\/\s*p\s*>/gi,"\n\n").replace(/\[([^\]]+)\]\([^)]*\)/g,"$1");
+  let t;try{t=new DOMParser().parseFromString(s,"text/html").body.textContent||""}catch(e){t=s.replace(/<[^>]*>/g,"")}
+  return t.replace(/\r/g,"").replace(/[ \t]+/g," ").replace(/ *\n */g,"\n").replace(/\n{3,}/g,"\n\n").trim().slice(0,4000);
+}
+const LANG_CODE={English:"en",Portuguese:"pt",Spanish:"es",French:"fr",German:"de",Italian:"it"};
+// The found book must really be this one: most of the title's words in common.
+const titleMatch=(a,b)=>{const w=x=>norm(x).replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(z=>z.length>2&&!STOPWORDS.has(z));const A=w(a),B=new Set(w(b));return !!A.length&&A.filter(x=>B.has(x)).length>=Math.ceil(A.length*.6)};
+async function findSynopsis(b){
+  const isbns=isbnDigits(b.isbn),lang=LANG_CODE[b.language]||"",cands=[];
+  const F="items(volumeInfo(title,description,language))";
+  for(const i of isbns.slice(0,2)){
+    const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=isbn:${i}&maxResults=2&fields=${F}`);
+    for(const it of (j&&j.items)||[]){const v=it.volumeInfo||{};if(v.description)cands.push({text:plainText(v.description),lang:v.language,src:"Google Books"})}
+    if(cands.length)break;
+  }
+  if(!cands.length)for(const t of titleVariants(b.title)){
+    const q=`intitle:${t}`+(b.author?` inauthor:${b.author}`:"");
+    const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=6&fields=${F}`);
+    for(const it of (j&&j.items)||[]){const v=it.volumeInfo||{};if(v.description&&titleMatch(t,v.title))cands.push({text:plainText(v.description),lang:v.language,src:"Google Books"})}
+    if(cands.length)break;
+  }
+  if(!cands.some(c=>!lang||c.lang===lang)){
+    let key="";
+    if(isbns[0]){const o=await getJson(`https://openlibrary.org/search.json?q=isbn:${isbns[0]}&fields=key&limit=1`);key=o&&o.docs&&o.docs[0]&&o.docs[0].key}
+    if(!key){const t=titleVariants(b.title)[0]||"";const o=await getJson(`https://openlibrary.org/search.json?title=${encodeURIComponent(t)}${b.author?`&author=${encodeURIComponent(b.author)}`:""}&fields=key,title&limit=1`);const d=o&&o.docs&&o.docs[0];if(d&&titleMatch(t,d.title))key=d.key}
+    if(/^\/works\/OL\d+W$/.test(key||"")){const w=await getJson(`https://openlibrary.org${key}.json`);const dsc=w&&w.description;const t=typeof dsc==="string"?dsc:dsc&&dsc.value;
+      if(t)cands.push({text:plainText(String(t).replace(/\n?-{3,}[\s\S]*$/,"")),lang:"en",src:"Open Library"})}
+  }
+  const good=cands.filter(c=>c.text.length>=40);
+  return good.find(c=>lang&&c.lang===lang)||good[0]||null;
+}
+// Synopses for every book that has none yet: found online, saved straight away (edit any of them on the book's page).
+function openSynRun(){
+  const todo=books.filter(b=>owned(b)&&!String(b.synopsis||"").trim()).sort((a,b)=>a.id-b.id);
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">All books · free</div><h2>Find synopses</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="card crprog"><div class="crline"><span id="syLine"><b>Ready</b> 0 of ${todo.length}</span></div><div class="crbar"><span id="syBar"></span></div>
+      <p class="small muted" id="syMsg">Looks up the ${todo.length} books without a synopsis on Google Books and Open Library, in the book’s language when possible. You can edit any of them later.</p></div>
+    <div class="actions"><button class="btn" id="syStop" hidden>Stop</button><button class="btn primary" id="syGo" ${todo.length?"":"disabled"}>Start</button></div>`);
+  let stop=false,done=0,miss=0,saved=0;const found=[],queue=todo.slice();
+  const paint=()=>{if(!s.isConnected)return;$("#syLine",s).innerHTML=`<b>${queue.length||stop?"Searching…":"Done"}</b> ${done} of ${todo.length} · ${saved+found.length} found · ${miss} not found`;$("#syBar",s).style.width=(100*done/Math.max(1,todo.length)).toFixed(1)+"%"};
+  let flushing=null;
+  const flush=async all=>{if(flushing)await flushing;if(!found.length||(!all&&found.length<20))return;
+    flushing=(async()=>{const items=found.splice(0,40);try{const d=await api("synopses_set",{items});(d.books||[]).forEach(upsertBook);saved+=items.length}catch(e){found.unshift(...items);throw e}})();
+    try{await flushing}finally{flushing=null}};
+  $("#syStop",s).onclick=()=>{stop=true};
+  $("#syGo",s).onclick=async e=>{e.target.hidden=true;$("#syStop",s).hidden=false;
+    const worker=async()=>{while(queue.length&&!stop){const b=queue.shift();let r=null;try{r=await findSynopsis(b)}catch(err){}
+      if(r)found.push({id:b.id,text:r.text});else miss++;done++;paint();try{await flush(false)}catch(err){stop=true;handleApiError(err,"Couldn’t save the synopses")}}};
+    await Promise.all([worker(),worker(),worker()]);
+    try{while(found.length)await flush(true)}catch(err){handleApiError(err,"Couldn’t save the synopses")}
+    paint();if(s.isConnected){$("#syStop",s).hidden=true;$("#syMsg",s).textContent=`${saved} synopses saved.${miss?` ${miss} books had none online: type one with Edit book if you like.`:""}`}
+    toast(`${saved} synopses saved`);render();
+  };
 }
 
 /* ---------- boot ---------- */

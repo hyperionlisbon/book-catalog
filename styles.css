@@ -665,3 +665,12 @@ body.searching .fab{display:none}
 .donebar.isdone{background:var(--cat-bg);color:var(--cat)}
 .donebar .btn{min-height:40px}
 .shhint{margin:-4px 0 0}
+/* synopsis */
+.synopsis{display:grid;gap:8px}
+.synopsis.none{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.syntext{margin:0;font-size:15px;line-height:1.55;white-space:pre-line;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
+.syntext.open{display:block;-webkit-line-clamp:unset}
+.linkbtn{justify-self:start;border:0;background:transparent;padding:6px 0;min-height:36px;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+#i-synopsis{min-height:130px}
+.synrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+.synrow .btn{min-height:40px}
