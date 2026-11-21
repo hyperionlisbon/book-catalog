@@ -654,3 +654,13 @@ body.searching .fab{display:none}
 .fxbox.cropmode .fxh::before{border-radius:3px}
 .thumbacts{display:flex;gap:8px;flex-wrap:wrap}
 .thumbacts .btn{min-height:40px}
+/* complete shelves */
+.bshelf .sno{display:inline-flex;align-items:center;gap:3px}
+.bshelf.done .sno{background:var(--cat);color:#fff;padding:1px 6px;border-radius:9px;top:3px;left:4px}
+.bshelf.done .sno b{font-size:10px}
+.casemeta .alldone{color:var(--cat);font-weight:600}
+.castab .casedone{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:9px;background:var(--cat);color:#fff;font-size:11px;margin-left:6px;vertical-align:2px;font-family:var(--f-body)}
+.lg.donelg{display:inline-grid;place-items:center;width:16px;height:14px;border-radius:7px;background:var(--cat);color:#fff;font-size:9px}
+.donebar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--paper);border-radius:12px;padding:8px 8px 8px 14px}
+.donebar.isdone{background:var(--cat-bg);color:var(--cat)}
+.donebar .btn{min-height:40px}
