@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; media-src 'self' blob:; connect-src https://script.google.com https://script.googleusercontent.com https://www.googleapis.com https://openlibrary.org https://query.wikidata.org; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data: https://books.google.com https://books.googleusercontent.com https://covers.openlibrary.org https://archive.org https://*.archive.org; media-src 'self' blob:; connect-src https://script.google.com https://script.googleusercontent.com https://www.googleapis.com https://openlibrary.org https://query.wikidata.org; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#DCE3DC">
@@ -14,7 +14,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&amp;family=Libre+Franklin:wght@400;500;600&amp;display=swap" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=16">
+<link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
 <header class="top">
@@ -58,6 +58,10 @@
         <option value="rating">Rating</option>
         <option value="series">Series</option>
       </select>
+      <div class="viewtog" role="group" aria-label="View">
+        <button id="vList" aria-label="Shelf list" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <button id="vWall" aria-label="Cover wall" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h6v8H4zM14 4h6v8h-6zM4 15h6v5H4zM14 15h6v5h-6z"/></svg></button>
+      </div>
     </div>
   </div>
 </header>
@@ -74,7 +78,7 @@
 </button>
 
 <div id="layer"></div>
-<script src="stats-core.js?v=16"></script>
-<script src="app.js?v=16"></script>
+<script src="stats-core.js?v=17"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

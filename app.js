@@ -49,9 +49,9 @@ let conn=store.get("bc-conn",null);
 let books=store.get("bc-books",[]);
 let budget=store.get("bc-budget",null);
 let hasClaude=store.get("bc-claude",false);
-const st={q:"",status:"",mark:"",genre:"",lang:"",sort:"id-desc",shown:60,...store.get("bc-view",{})};
+const st={q:"",status:"",mark:"",genre:"",lang:"",sort:"id-desc",view:"list",shown:60,...store.get("bc-view",{})};
 st.q="";st.shown=60;
-const saveView=()=>store.set("bc-view",{status:st.status,mark:st.mark,genre:st.genre,lang:st.lang,sort:st.sort});
+const saveView=()=>store.set("bc-view",{view:st.view,status:st.status,mark:st.mark,genre:st.genre,lang:st.lang,sort:st.sort});
 const marksOf=b=>window.BCStats.marksOf(b.special);
 const MARKS={special:{label:"Special",test:m=>m.special},signed:{label:"Signed",test:m=>!!m.signed}};
 const photoCache=new Map(); // book id -> object URL (this visit only)
@@ -179,7 +179,11 @@ function renderList(){
   const wire=()=>{const x=$("#showAll");if(x)x.onclick=()=>{st.status="";st.mark="";st.genre="";st.lang="";saveView();render()}};
   if(!r.length){list.innerHTML=`<div class="notice"><strong>No books match</strong><span>${hidden?"":"Try a different search or clear the filters."}</span>${hint}</div>`;$("#moreWrap").hidden=true;wire();return}
   const todo=backlog.length&&!st.q.trim()?`<div class="hiddenhint todohint"><span><b>${backlog.length} book${backlog.length===1?"":"s"}</b> seen on your shelves ${backlog.length===1?"isn’t":"aren’t"} in your catalog yet</span><button class="btn" id="todoBtn">Add ${backlog.length===1?"it":"them"}</button></div>`:"";
-  list.innerHTML=`${todo}${hint}<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`;wire();
+  const miss=st.view==="wall"&&!st.q.trim()?books.filter(b=>owned(b)&&!b.coverUrl).length:0;
+  const covHint=miss?`<div class="hiddenhint"><span><b>${miss} book${miss===1?"":"s"}</b> without an online cover</span><button class="btn" id="findCovers">Find covers</button></div>`:"";
+  list.innerHTML=`${todo}${hint}${covHint}${st.view==="wall"?wallHtml(r.slice(0,st.shown)):`<div class="shelf">${r.slice(0,st.shown).map(spineHtml).join("")}</div>`}`;wire();
+  const fc=$("#findCovers");if(fc)fc.onclick=()=>openCoverRun();
+  if(st.view==="wall"){$$(".wtile",list).forEach(t=>{const b=books.find(x=>x.id===+t.dataset.id);if(b)applyPalette($(".wcov",t),b)});wireCoverImages(list)}
   const tb=$("#todoBtn");if(tb)tb.onclick=()=>openBacklog();
   $("#moreWrap").hidden=r.length<=st.shown;
   $("#moreBtn").textContent=`Show more (${r.length-st.shown} left)`;
@@ -194,7 +198,15 @@ $("#fGenre").addEventListener("change",e=>{st.genre=e.target.value;st.shown=60;s
 $("#fLang").addEventListener("change",e=>{st.lang=e.target.value;st.shown=60;saveView();renderList()});
 $("#fSort").addEventListener("change",e=>{st.sort=e.target.value;saveView();renderList()});
 $("#moreBtn").addEventListener("click",()=>{st.shown+=60;renderList()});
-$("#list").addEventListener("click",e=>{const sp=e.target.closest(".spine");if(sp)openBook(+sp.dataset.id)});
+$("#list").addEventListener("click",e=>{const sp=e.target.closest(".spine,.wtile");if(sp)openBook(+sp.dataset.id)});
+function setView(v){st.view=v==="wall"?"wall":"list";st.shown=60;saveView();$("#vList").setAttribute("aria-pressed",String(st.view==="list"));$("#vWall").setAttribute("aria-pressed",String(st.view==="wall"));renderList()}
+$("#vList").addEventListener("click",()=>setView("list"));$("#vWall").addEventListener("click",()=>setView("wall"));
+$("#vList").setAttribute("aria-pressed",String(st.view!=="wall"));$("#vWall").setAttribute("aria-pressed",String(st.view==="wall"));
+function wallHtml(list){
+  return `<div class="wall">${list.map(b=>{const mk=marksOf(b);const label=[b.title,b.author,mk.special?"special edition":"",mk.signed?mk.signed.toLowerCase():""].filter(Boolean).join(", ");
+    return `<button class="wtile" data-id="${+b.id}" aria-label="${esc(label)}"><span class="wcov ${colorCls(b)}${mk.sprayed?" sprayed":""}"><span class="wedge"></span><span class="wface">${coverFaceHtml(b)}${mk.special?`<span class="wfoil"></span><span class="wcorner"></span>`:""}${mk.signed?`<span class="wsig">${ICON.sig}</span>`:""}</span></span>
+      <span class="wt">${esc(b.title)}</span><span class="wsub">${+b.rating?"★".repeat(+b.rating):esc(statusLabel(b.status||"TBR"))}</span></button>`}).join("")}</div>`;
+}
 $("#addBtn").addEventListener("click",openAddChoice);
 $("#settingsBtn").addEventListener("click",openSettings);
 $("#checkBtn").addEventListener("click",openCheck);
@@ -225,7 +237,7 @@ function sheet(html){
   const scrim=layer.firstElementChild;scrim.addEventListener("click",e=>{if(e.target===scrim)closeSheet()});
   const s=scrim.firstElementChild;$$("[data-close]",s).forEach(x=>x.onclick=closeSheet);return s;
 }
-document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".twinv"))closeTwin()});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".coverv"))closeCoverRun();else if($(".twinv"))closeTwin()});
 
 function openSettings(){
   const s=sheet(`
@@ -278,17 +290,19 @@ function ribbonsHtml(b){
 function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   closeBook();
-  const sp=spineOf(b);
+  const sp=spineOf(b),mode=coverMode(b),mk0=marksOf(b),is3d=mode!=="photo",pal=mode==="online"?paletteOf(b):null;
   const fact=(k,v,s)=>v?`<div class="fact"><div class="k">${k}</div><div class="v">${esc(v)}</div>${s?`<div class="s">${esc(s)}</div>`:""}</div>`:"";
   const v=document.createElement("div");v.className="book";v.setAttribute("role","dialog");v.setAttribute("aria-label",b.title);
   v.innerHTML=`<div class="book-inner ${sp.cls}">
-    <div class="hero" id="hero">
-      <div class="loading" id="heroInner">${b.hasPhoto?"Loading photo…":""}</div>
+    <div class="hero${is3d?" h3d":""}" id="hero">
+      ${is3d?`<div class="hbackdrop" aria-hidden="true">${mode==="online"?`<img src="${esc(b.coverUrl)}" alt="" referrerpolicy="no-referrer">`:""}</div>
+        <div class="b3d${mk0.special?" special":""}${mk0.sprayed?" sprayed":""}" role="img" aria-label="${esc(mode==="online"?`Cover of ${b.title}`:`${b.title}: no cover yet`)}"><div class="b3d-book"><span class="b3d-pages"></span><span class="b3d-front">${coverFaceHtml(b,mode)}${mk0.special?`<span class="b3d-foil"></span>`:""}</span></div><span class="b3d-shadow"></span></div>`
+        :`<div class="loading" id="heroInner">Loading photo…</div>`}
       <button class="over back" id="bkBack" aria-label="Back to shelves">${ICON.back}</button>
       ${ribbonsHtml(b)}
-      <button class="over retake" id="bkPhoto">${ICON.cam}${b.hasPhoto?"Retake photo":"Add photo"}</button>
+      <div class="herobar"><span class="hchip">${mode==="online"?"Online cover":mode==="photo"?"Your photo":"No cover yet"}</span><span class="hbtns">${mode!=="online"?`<button class="over hbtn" id="bkPhoto">${ICON.cam}${b.hasPhoto?"Retake photo":"Add photo"}</button>`:""}<button class="over hbtn" id="bkCover">${mode==="online"?"Change cover":"Find cover"}</button></span></div>
     </div>
-    <div class="band ${sp.light?"light":""}">
+    <div class="band ${sp.light&&!pal?"light":""}">
       <div class="row"><span class="no">No. ${pad(b.id)}</span>${stars(b.rating)}</div>
       <h1>${esc(b.title)}</h1>
       <div class="by">${esc(b.author)}${b.series?` · ${esc(b.series)}${b.seriesNo!==""?` #${esc(b.seriesNo)}`:""}`:""}</div>
@@ -311,6 +325,9 @@ function openBook(id){
       <div class="actions"><button class="btn danger" id="bkDel">Delete</button><button class="btn primary" id="bkEdit">Edit book</button></div>
     </div></div>`;
   document.body.append(v);syncScroll();
+  if(pal){const bi=$(".book-inner",v);bi.style.setProperty("--sp-bg",pal[0]);bi.style.setProperty("--sp-fg",pal[2]);applyPalette(bi,b)}
+  wireCoverImages(v);
+  $("#bkCover",v).onclick=()=>openCoverPicker(books.find(x=>x.id===b.id)||b);
   $("#bkBack",v).onclick=closeBook;
   $("#bkEdit",v).onclick=()=>openForm(b);
   wireWhere(v,b);
@@ -321,7 +338,7 @@ function openBook(id){
     if(e.target.closest("#cpLink"))openLinkPicker(b);
     if(e.target.closest("#cpUnlink"))unlinkCopy(b,e.target.closest("#cpUnlink"));
   };
-  $("#bkPhoto",v).onclick=()=>openCamera({steps:COVER_STEPS,max:1},async r=>{
+  const bp=$("#bkPhoto",v);if(bp)bp.onclick=()=>openCamera({steps:COVER_STEPS,max:1},async r=>{
     if(!r.photos.length)return;
     const btn=$("#bkPhoto",v);btn.disabled=true;btn.innerHTML=`${ICON.cam}<span>Saving photo…</span>`;
     try{
@@ -339,6 +356,7 @@ function openBook(id){
       catch(err){e.target.disabled=false;handleApiError(err,"Couldn’t delete")}};
   };
   const inner=$("#heroInner",v);
+  if(!inner)return;
   if(!b.hasPhoto){inner.className="empty";inner.innerHTML=`<div class="ghost">${esc(b.title)}</div><span class="small">No photo yet. Tap “Add photo” to photograph your copy.</span>`;return}
   photoUrl(b).then(url=>{
     if(!v.isConnected)return;
@@ -1210,8 +1228,8 @@ function layoutSpines(root,{maxPpu=22,minW=3,fixedPpu=0}={}){
   });
 }
 
-function closeTwin(){const v=$(".twinv");if(v)v.remove();syncScroll()}
-function refreshTwin(){const v=$(".twinv");if(v)renderTwin(v);renderChrome()}
+function closeTwin(){const v=$(".twinv:not(.coverv)");if(v)v.remove();syncScroll()}
+function refreshTwin(){const v=$(".twinv:not(.coverv)");if(v)renderTwin(v);renderChrome()}
 function openTwin(){
   closeTwin();
   const v=document.createElement("div");v.className="twinv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Bookcases");
@@ -1547,6 +1565,232 @@ function addFromBacklog(x){
   $("#afX",s).onclick=openBacklog;
   const cam=$("#afCam",s);if(cam)cam.onclick=()=>{closeSheet();openCamera({steps:ADD_STEPS,max:MAX_PHOTOS},r=>openForm(null,r,pre,after))};
   $("#afType",s).onclick=()=>openForm(null,null,pre,after);
+}
+
+/* ---------- covers: found online (free), shown as 3D books; your own photos stay saved ---------- */
+const httpsImg=u=>u?String(u).replace(/^http:\/\//,"https://").replace(/&edge=curl/g,""):"";
+const COVER_OK=/^https:\/\/(books\.google\.com|books\.googleusercontent\.com|covers\.openlibrary\.org)\/[A-Za-z0-9\/_.,=&?%-]{1,600}$/;
+// What the book shows: the online cover by default, your photo if you chose it (or if there's no online cover), else a designed cover.
+const coverMode=b=>(b.coverPref==="photo"&&b.hasPhoto)?"photo":b.coverUrl?"online":b.hasPhoto?"photo":"none";
+const paletteOf=b=>{const c=String(b.coverColors||"").split(",").filter(x=>/^#[0-9a-f]{6}$/i.test(x));return c.length===3?c:null};
+const hex2rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+const rgb2hex=a=>"#"+a.map(x=>Math.max(0,Math.min(255,Math.round(x))).toString(16).padStart(2,"0")).join("");
+const lumOf=h=>{const [r,g,b]=hex2rgb(h).map(v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)});return .2126*r+.7152*g+.0722*b};
+const contrast=(a,b)=>{const x=lumOf(a),y=lumOf(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+const mix=(h,t,k)=>rgb2hex(hex2rgb(h).map((v,i)=>v+(hex2rgb(t)[i]-v)*k));
+// Three colours from a cover: a deep one (band), the most colourful one (sprayed edges, accents) and a light one (text).
+function paletteFromImage(img){
+  const W=36,H=54,cv=document.createElement("canvas");cv.width=W;cv.height=H;const g=cv.getContext("2d");g.drawImage(img,0,0,W,H);
+  const px=g.getImageData(0,0,W,H).data,buckets=new Map();
+  for(let i=0;i<px.length;i+=4){const k=(px[i]>>4)<<8|(px[i+1]>>4)<<4|(px[i+2]>>4);const e=buckets.get(k)||[0,0,0,0];e[0]+=px[i];e[1]+=px[i+1];e[2]+=px[i+2];e[3]++;buckets.set(k,e)}
+  const all=[...buckets.values()].map(e=>({hex:rgb2hex([e[0]/e[3],e[1]/e[3],e[2]/e[3]]),n:e[3]})).sort((a,b)=>b.n-a.n);
+  const total=W*H,big=all.filter(c=>c.n>=total*.02);
+  const sat=h=>{const [r,g2,b]=hex2rgb(h);const mx=Math.max(r,g2,b),mn=Math.min(r,g2,b);return mx?(mx-mn)/mx:0};
+  let dark=(big.find(c=>lumOf(c.hex)<.08)||{}).hex||mix(all[0].hex,"#000000",.6);
+  if(lumOf(dark)>.08)dark=mix(dark,"#000000",.45);
+  const light=(big.slice().sort((a,b)=>lumOf(b.hex)-lumOf(a.hex))[0]||{}).hex;
+  const lightOk=light&&lumOf(light)>.55&&contrast(dark,light)>=4.5?light:mix(light||"#ffffff","#ffffff",.75);
+  const dist=(x,y)=>{const p=hex2rgb(x),q=hex2rgb(y);return Math.hypot(p[0]-q[0],p[1]-q[1],p[2]-q[2])};
+  const far=all.filter(c=>c.n>=total*.006&&dist(c.hex,dark)>70&&dist(c.hex,all[0].hex)>40);
+  const accent=((far.length?far:big).slice().sort((a,b)=>(sat(b.hex)+.35)*Math.sqrt(b.n)-(sat(a.hex)+.35)*Math.sqrt(a.n))[0]||{hex:mix(dark,"#ffffff",.45)}).hex;
+  return [dark,accent,contrast(dark,lightOk)>=4.5?lightOk:"#F4F7F4"];
+}
+function paletteFromB64(b64,type){return new Promise(res=>{const img=new Image();img.onload=()=>{try{res(paletteFromImage(img))}catch(e){res(null)}};img.onerror=()=>res(null);img.src=`data:${type||"image/jpeg"};base64,${b64}`})}
+// The script fetches the images (the app can't read pixels from other sites) and the colours are worked out here.
+async function coverColors(urls){
+  const d=await api("cover_fetch",{urls});
+  return Promise.all((d.covers||[]).map(c=>c&&c.image?paletteFromB64(c.image,c.type):null));
+}
+
+/* finding covers: Google Books and Open Library, by ISBN first, then by title */
+async function findCoverCandidates(b,{quick=false,query=""}={}){
+  const out=[],seen=new Set(),isbns=isbnDigits(b.isbn);
+  const add=c=>{if(!c.url||!COVER_OK.test(c.url))return;const k=c.key||c.url;if(seen.has(k))return;seen.add(k);out.push(c)};
+  const gbF="items(id,volumeInfo(title,publisher,publishedDate,imageLinks,industryIdentifiers,printType))";
+  const gbAdd=async(items,exactIsbns,limit)=>{
+    for(const it of (items||[]).filter(x=>x.volumeInfo&&x.volumeInfo.imageLinks).slice(0,limit)){
+      const vi=it.volumeInfo;let links=vi.imageLinks;
+      const det=await getJson(`https://www.googleapis.com/books/v1/volumes/${encodeURIComponent(it.id)}?fields=volumeInfo(imageLinks)`);
+      if(det&&det.volumeInfo&&det.volumeInfo.imageLinks)links={...links,...det.volumeInfo.imageLinks};
+      const ids=(vi.industryIdentifiers||[]).map(x=>x.identifier);
+      add({key:"gb:"+it.id,url:httpsImg(links.large||links.medium||links.small||links.thumbnail),thumb:httpsImg(links.thumbnail||links.smallThumbnail),
+        src:"Google Books",label:[vi.publisher,yearIn(vi.publishedDate)||""].filter(Boolean).join(" · ")||"Edition not stated",exact:exactIsbns.some(x=>ids.includes(x))});
+    }
+  };
+  const olAdd=async(workKey,exactIsbns,limit)=>{
+    if(!/^\/works\/OL\d+W$/.test(workKey||""))return;
+    const e=await getJson(`https://openlibrary.org${workKey}/editions.json?limit=60`);
+    const eds=((e&&e.entries)||[]).filter(x=>(x.covers||[]).some(c=>c>0));
+    eds.sort((a,c)=>{const ex=x=>[...(x.isbn_13||[]),...(x.isbn_10||[])].some(i=>exactIsbns.includes(i))?0:1;return ex(a)-ex(c)});
+    for(const x of eds.slice(0,limit)){const id=x.covers.find(c=>c>0);
+      add({key:"ol:"+id,url:`https://covers.openlibrary.org/b/id/${id}-L.jpg`,thumb:`https://covers.openlibrary.org/b/id/${id}-M.jpg`,src:"Open Library",
+        label:[(x.publishers||[])[0],yearIn(x.publish_date)||"",x.physical_format].filter(Boolean).join(" · ")||"Edition not stated",
+        exact:[...(x.isbn_13||[]),...(x.isbn_10||[])].some(i=>exactIsbns.includes(i))});}
+  };
+  if(!query){
+    for(const i of isbns.slice(0,2)){
+      const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=isbn:${i}&maxResults=3&fields=${gbF}`);
+      await gbAdd(j&&j.items,isbns,2);
+      const o=await getJson(`https://openlibrary.org/search.json?q=isbn:${i}&fields=key&limit=1`);
+      await olAdd(o&&o.docs&&o.docs[0]&&o.docs[0].key,isbns,quick?2:5);
+    }
+    if(quick&&out.some(c=>c.exact))return out.sort((a,c)=>c.exact-a.exact);
+  }
+  const terms=query?[query]:titleVariants(b.title).slice(0,quick?1:2);
+  for(const t of terms){
+    if(out.length>=9)break;
+    const qa=query?`q=${encodeURIComponent(query)}`:`q=${encodeURIComponent(`intitle:${t}`+(b.author?` inauthor:${b.author}`:""))}`;
+    const j=await getJson(`https://www.googleapis.com/books/v1/volumes?${qa}&maxResults=8&fields=${gbF}`);
+    await gbAdd(j&&j.items,isbns,quick?2:4);
+    const o=await getJson(query?`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&fields=key&limit=1`:`https://openlibrary.org/search.json?title=${encodeURIComponent(t)}${b.author?`&author=${encodeURIComponent(b.author)}`:""}&fields=key&limit=1`);
+    await olAdd(o&&o.docs&&o.docs[0]&&o.docs[0].key,isbns,quick?2:4);
+  }
+  return out.sort((a,c)=>c.exact-a.exact).slice(0,9);
+}
+
+/* one cover image or a designed stand-in, for the 3D book, the wall and the picker */
+function coverFaceHtml(b,mode){
+  mode=mode||coverMode(b);
+  if(mode==="online")return `<img class="cimg" src="${esc(b.coverUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback="${b.id}">`;
+  if(mode==="photo")return `<img class="cimg photo" alt="" data-photo="${b.id}">`;
+  const lw=Math.max(...String(b.title||"").split(/\s+/).map(w=>w.length),0);
+  return `<span class="cph ${colorCls(b)}${lw>12?" xs":lw>8?" s":""}"><i>${esc(b.title)}</i>${b.author?`<em>${esc(b.author)}</em>`:""}</span>`;
+}
+// Load photos when they scroll into view; swap broken online covers for the designed stand-in.
+let photoObserver=null;
+function wireCoverImages(root){
+  $$("img[data-fallback]",root).forEach(img=>{if(img._w)return;img._w=1;img.addEventListener("error",()=>{const b=books.find(x=>x.id===+img.dataset.fallback);if(b)img.outerHTML=coverFaceHtml(b,b.hasPhoto?"photo":"none");wireCoverImages(root)})});
+  const load=img=>{const b=books.find(x=>x.id===+img.dataset.photo);if(!b)return;photoUrl(b).then(u=>{if(u)img.src=u;else img.outerHTML=coverFaceHtml(b,"none")}).catch(()=>{})};
+  const ph=$$("img[data-photo]:not([src])",root);if(!ph.length)return;
+  if(!("IntersectionObserver" in window)){ph.forEach(load);return}
+  if(!photoObserver)photoObserver=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){photoObserver.unobserve(e.target);load(e.target)}}),{rootMargin:"300px"});
+  ph.forEach(i=>photoObserver.observe(i));
+}
+// Colours from the cover go into CSS variables (inline styles are blocked by the page's security rules).
+function applyPalette(el,b){
+  const p=paletteOf(b);if(!el)return;
+  if(!p)return;
+  el.style.setProperty("--cv-dark",p[0]);el.style.setProperty("--cv-accent",p[1]);el.style.setProperty("--cv-light",p[2]);el.classList.add("haspal");
+}
+
+/* choosing the cover of one book */
+function openCoverPicker(b,o={}){
+  let cands=o.cands||null,picked=-1,query="";
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(b.title)}${b.author?" · "+esc(b.author):""}</div><h2>Choose the cover</h2>
+      <div class="sub">Your copy: ${esc([b.cover,b.publisher,b.editionYear].filter(Boolean).join(", ")||"edition not recorded")}</div></div><button class="x" id="cpX" aria-label="Close">×</button></div>
+    <div id="cpBody"><div class="notice"><span>Searching Google Books and Open Library…</span></div></div>
+    <form class="cpsearch" id="cpSearch"><input class="field" id="cpQ" type="search" placeholder="Search other words: title, author, publisher" value="${esc(query)}" autocomplete="off"><button class="btn" type="submit">Search</button></form>
+    <div class="card cpphoto">${b.hasPhoto?`<img class="cpthumb" data-photo="${b.id}" alt="">`:`<span class="cpthumb none">${ICON.cam}</span>`}
+      <span class="cptxt"><b>Your photo</b><span class="small muted">${b.hasPhoto?"Kept in your Drive. Show it instead of an online cover any time.":"Photograph your own copy."}</span></span>
+      <span class="cpbtns">${b.hasPhoto?`<button class="btn" id="cpUsePhoto" ${coverMode(b)==="photo"?"disabled":""}>${coverMode(b)==="photo"?"Shown":"Use it"}</button>`:""}<button class="btn" id="cpPhoto">${b.hasPhoto?"Retake":"Take photo"}</button></span></div>
+    <p class="small err" id="cpMsg"></p>
+    <div class="actions">${b.coverUrl?`<button class="btn danger left" id="cpRemove">Remove online cover</button>`:""}${o.onSkip?`<button class="btn" id="cpSkip">Skip</button>`:`<button class="btn" id="cpCancel">Cancel</button>`}<button class="btn primary" id="cpUse" disabled>Use this cover</button></div>`);
+  wireCoverImages(s);
+  const msg=$("#cpMsg",s),useBtn=$("#cpUse",s);
+  const done=()=>{closeSheet();if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}};
+  $("#cpX",s).onclick=()=>{closeSheet();if(o.onClose)o.onClose()};
+  const cc=$("#cpCancel",s);if(cc)cc.onclick=()=>{closeSheet();if(o.onClose)o.onClose()};
+  const sk=$("#cpSkip",s);if(sk)sk.onclick=()=>{closeSheet();o.onSkip()};
+  const paint=()=>{
+    const body=$("#cpBody",s);
+    if(!cands)return;
+    if(!cands.length){body.innerHTML=`<div class="notice"><span>No covers found${query?` for “${esc(query)}”`:""}. Try other words below, or use your photo.</span></div>`;return}
+    body.innerHTML=`<div class="cpgrid">${cands.map((c,i)=>`<button class="cpc" data-i="${i}" aria-pressed="${i===picked}"><span class="cpimg"><img src="${esc(c.thumb||c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">${c.exact?`<span class="cpexact">Your ISBN</span>`:""}</span><span class="cpsrc">${esc(c.src)}</span><span class="cplab">${esc(c.label)}</span></button>`).join("")}</div>`;
+    $$(".cpimg img",body).forEach(img=>img.addEventListener("error",()=>{const bt=img.closest(".cpc");if(bt)bt.remove()}));
+    useBtn.disabled=picked<0;
+  };
+  const search=async q=>{query=q;cands=null;picked=-1;useBtn.disabled=true;$("#cpBody",s).innerHTML=`<div class="notice"><span>Searching Google Books and Open Library…</span></div>`;
+    try{cands=await findCoverCandidates(b,{query:q})}catch(e){cands=[]}
+    if(!s.isConnected)return;picked=cands.findIndex(c=>c.exact&&c.url===b.coverUrl);if(picked<0)picked=cands.findIndex(c=>c.url===b.coverUrl);if(picked<0&&!q)picked=cands.findIndex(c=>c.exact);paint()};
+  $("#cpBody",s).addEventListener("click",e=>{const c=e.target.closest(".cpc");if(!c)return;picked=+c.dataset.i;$$(".cpc",s).forEach(x=>x.setAttribute("aria-pressed",String(+x.dataset.i===picked)));useBtn.disabled=false});
+  $("#cpSearch",s).addEventListener("submit",e=>{e.preventDefault();search($("#cpQ",s).value.trim())});
+  useBtn.onclick=async()=>{
+    const c=cands&&cands[picked];if(!c)return;useBtn.disabled=true;useBtn.textContent="Saving…";msg.textContent="";
+    try{
+      const [pal]=await coverColors([c.url]);
+      if(!pal){msg.textContent="That cover couldn’t be loaded. Pick another one.";useBtn.textContent="Use this cover";useBtn.disabled=false;return}
+      const d=await api("covers_set",{items:[{id:b.id,url:c.url,colors:pal.join(",")}]});(d.books||[]).forEach(upsertBook);
+      const nb=books.find(x=>x.id===b.id);if(nb&&nb.coverPref==="photo")await quickSave(nb,{coverPref:""});
+      toast("Cover saved");done();
+    }catch(e){useBtn.textContent="Use this cover";useBtn.disabled=false;handleApiError(e,"Couldn’t save the cover")}
+  };
+  const up=$("#cpUsePhoto",s);if(up)up.onclick=async()=>{up.disabled=true;try{await quickSave(b,{coverPref:"photo"});toast("Showing your photo");done()}catch(e){up.disabled=false;handleApiError(e,"Couldn’t save")}};
+  const rm=$("#cpRemove",s);if(rm)rm.onclick=async()=>{rm.disabled=true;try{const d=await api("covers_set",{items:[{id:b.id,url:""}]});(d.books||[]).forEach(upsertBook);toast("Online cover removed");done()}catch(e){rm.disabled=false;handleApiError(e,"Couldn’t remove")}};
+  $("#cpPhoto",s).onclick=()=>{closeSheet();openCamera({steps:COVER_STEPS,max:1},async r=>{
+    if(!r.photos.length){openCoverPicker(b,o);return}
+    try{const d=await api("photo_set",{id:b.id,image:await blobToB64(r.photos[0].blob)});setCachedPhoto(b.id,r.photos[0].blob);let nb=upsertBook(d.book);
+      if(nb.coverUrl&&nb.coverPref!=="photo")nb=await quickSave(nb,{coverPref:"photo"});toast("Photo saved");if(o.onDone)o.onDone();else{render();if($(".book"))openBook(b.id)}}
+    catch(e){handleApiError(e,"Couldn’t save the photo")}
+  })};
+  if(cands){picked=cands.findIndex(c=>c.exact);paint()}else search("");
+}
+
+/* finding covers for every book at once */
+let coverRun=null; // {rows:[{b,state:'wait'|'search'|'found'|'choose'|'none'|'saved',cands,pick}], running}
+function closeCoverRun(){const v=$(".coverv");if(v)v.remove();syncScroll()}
+function openCoverRun(){
+  closeCoverRun();
+  const v=document.createElement("div");v.className="twinv coverv";v.setAttribute("role","dialog");v.setAttribute("aria-label","Find covers");document.body.append(v);syncScroll();
+  if(!coverRun||(!coverRun.running&&!coverRun.rows.some(r=>["found","choose"].includes(r.state)))){
+    coverRun={rows:books.filter(b=>owned(b)&&!b.coverUrl).sort((a,b)=>a.id-b.id).map(b=>({b,state:"wait"})),running:false,t0:0,doneN:0};
+  }
+  v.addEventListener("click",e=>{const t=e.target.closest("button");if(!t)return;
+    if(t.id==="crBack"){closeCoverRun();render();return}
+    if(t.id==="crStart"){runCoverSearch(v);return}
+    if(t.id==="crUse"){useFoundCovers(v);return}
+    if(t.id==="crChoose"){chooseCovers(v);return}
+    if(t.dataset.row){const r=coverRun.rows[+t.dataset.row];if(r&&["found","choose","none"].includes(r.state))openCoverPicker(r.b,{cands:r.cands,onDone:()=>{r.state=books.find(x=>x.id===r.b.id).coverUrl?"saved":r.state;paintCoverRun(v)},onClose:()=>paintCoverRun(v)})}
+  });
+  paintCoverRun(v);
+}
+function paintCoverRun(v){
+  if(!v||!v.isConnected)return;const R=coverRun.rows,cnt=s=>R.filter(r=>r.state===s).length;
+  const searched=R.filter(r=>!["wait","search"].includes(r.state)).length;
+  const left=coverRun.running&&coverRun.doneN?Math.ceil((Date.now()-coverRun.t0)/coverRun.doneN*(R.length-searched)/60000):0;
+  const lab={wait:"",search:"Searching…",found:"Found",choose:"Choose",none:"Not found",saved:"Saved ✓"};
+  v.innerHTML=`<div class="statsv-inner">
+    <div class="statsv-head"><button class="roundbtn" id="crBack" aria-label="Back">${ICON.back}</button><div class="grow1"><div class="eyebrow">All books · free</div><h1>Find covers</h1></div></div>
+    ${!R.length?`<div class="notice"><strong>Every book has a cover</strong><span>Change one from its book page.</span></div>`:`
+    <div class="card crprog"><div class="crline"><span><b>${coverRun.running?"Searching…":searched?"Search done":"Ready"}</b> ${searched} of ${R.length}</span><span class="muted">${left?`about ${left} min left`:""}</span></div>
+      <div class="crbar"><span data-w="${R.length?(100*searched/R.length).toFixed(1):0}"></span></div>
+      <div class="crchips"><span class="pill okp">✓ ${cnt("found")+cnt("saved")} found</span><span class="pill chk">${cnt("choose")} to choose</span><span class="pill nonep">${cnt("none")} not found</span></div>
+      ${!coverRun.running&&!searched?`<p class="small muted">Looks up the ${R.length} books without an online cover on Google Books and Open Library, by ISBN first. Nothing is saved until you choose. Your own photos stay saved.</p><button class="btn primary" id="crStart">Start searching</button>`:""}</div>
+    <div class="crlist">${R.map((r,i)=>`<button class="crrow st-${r.state}" data-row="${i}" ${["found","choose","none"].includes(r.state)?"":"disabled"}><span class="crcov">${r.pick?`<img src="${esc(r.pick.thumb||r.pick.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:coverFaceHtml(r.b,r.b.hasPhoto?"photo":"none")}</span>
+      <span class="otxt"><span class="t">${esc(r.b.title)}</span><span class="s">No. ${pad(r.b.id)} · ${r.state==="found"?esc(r.pick.exact?"matched by ISBN":r.pick.src):r.state==="choose"?`${r.cands.length} option${r.cands.length===1?"":"s"}`:r.state==="none"?(r.b.hasPhoto?"not found online · your photo stays":"not found online"):r.state==="saved"?"cover saved":""}</span></span><span class="crtag">${lab[r.state]}</span></button>`).join("")}</div>
+    ${!coverRun.running&&searched?`<div class="actions sticky">${cnt("choose")?`<button class="btn" id="crChoose">Choose the ${cnt("choose")}</button>`:""}${cnt("found")?`<button class="btn primary" id="crUse">Use the ${cnt("found")} found</button>`:""}</div>`:""}`}
+  </div>`;
+  $$("[data-w]",v).forEach(el=>el.style.width=el.dataset.w+"%");
+  wireCoverImages(v);
+}
+async function runCoverSearch(v){
+  if(coverRun.running)return;coverRun.running=true;coverRun.t0=Date.now();coverRun.doneN=0;paintCoverRun(v);
+  const queue=coverRun.rows.filter(r=>r.state==="wait");let last=0;
+  const worker=async()=>{while(queue.length){const r=queue.shift();r.state="search";
+    let cands=[];try{cands=await findCoverCandidates(r.b,{quick:true})}catch(e){}
+    r.cands=cands;const ex=cands.filter(c=>c.exact);
+    if(ex.length){r.state="found";r.pick=ex[0]}else if(cands.length){r.state="choose";r.pick=null}else r.state="none";
+    coverRun.doneN++;if(Date.now()-last>400){last=Date.now();paintCoverRun($(".coverv"))}}};
+  await Promise.all([worker(),worker(),worker()]);
+  coverRun.running=false;paintCoverRun($(".coverv"));
+}
+async function useFoundCovers(v){
+  const todo=coverRun.rows.filter(r=>r.state==="found");const btn=$("#crUse",v);let n=0;
+  for(let i=0;i<todo.length;i+=6){
+    const chunk=todo.slice(i,i+6);if(btn){btn.disabled=true;btn.textContent=`Saving ${Math.min(i+6,todo.length)} of ${todo.length}…`}
+    try{
+      const pals=await coverColors(chunk.map(r=>r.pick.url));
+      const items=chunk.map((r,j)=>pals[j]?{id:r.b.id,url:r.pick.url,colors:pals[j].join(",")}:null).filter(Boolean);
+      chunk.forEach((r,j)=>{if(!pals[j]){r.state=r.cands.length>1?"choose":"none";r.pick=null}});
+      if(items.length){const d=await api("covers_set",{items});(d.books||[]).forEach(upsertBook);chunk.forEach(r=>{if(r.state==="found"){r.state="saved";n++}})}
+    }catch(e){handleApiError(e,"Couldn’t save some covers");break}
+  }
+  toast(`${n} cover${n===1?"":"s"} saved`);render();paintCoverRun($(".coverv"));
+}
+function chooseCovers(v){
+  const list=coverRun.rows.filter(r=>r.state==="choose");let i=0;
+  const next=()=>{const r=list[i++];if(!r){paintCoverRun($(".coverv"));return}
+    openCoverPicker(r.b,{cands:r.cands,onDone:()=>{if(books.find(x=>x.id===r.b.id).coverUrl)r.state="saved";next()},onSkip:next,onClose:()=>paintCoverRun($(".coverv"))})};
+  next();
 }
 
 /* ---------- boot ---------- */
