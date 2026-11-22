@@ -1,6 +1,6 @@
 // Book Catalog: keeps the app's own files on the phone so it opens straight away.
 // Your books and photos are NOT stored here: they always come from your Google script.
-const VERSION = "27";
+const VERSION = "28";
 const SHELL = "bc-shell-v" + VERSION, FONTS = "bc-fonts-v1";
 const FILES = ["./", "app.js?v=" + VERSION, "styles.css?v=" + VERSION, "stats-core.js?v=" + VERSION,
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png"];
@@ -21,7 +21,8 @@ const scopeUrl = () => new URL("./", self.registration.scope).href;
 // The page itself: the newest from the internet, or the saved one when the network is slow or off.
 async function page(req) {
   const cache = await caches.open(SHELL);
-  const net = fetch(req).then(r => { if (okToKeep(r)) cache.put(scopeUrl(), r.clone()); return r; });
+  // "no-cache": always ask GitHub whether the page changed, so a new version shows up on the next open.
+  const net = fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then(r => { if (okToKeep(r)) cache.put(scopeUrl(), r.clone()); return r; });
   const saved = await cache.match(scopeUrl());
   if (!saved) return net;
   const late = new Promise(res => setTimeout(() => res(saved), PAGE_WAIT_MS));

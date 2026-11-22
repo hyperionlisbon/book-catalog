@@ -41,7 +41,7 @@ const ICON={
   star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
-const APP_VERSION="27";
+const APP_VERSION="28";
 let toastT;
 function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
@@ -357,7 +357,7 @@ function openBook(id){
     smore.onclick=()=>{const open=stx.classList.toggle("open");smore.textContent=open?"Show less":"Read more";smore.setAttribute("aria-expanded",String(open))}}
   const sf2=$("#synFind",v);if(sf2)sf2.onclick=async()=>{sf2.disabled=true;sf2.textContent="Looking…";
     const r=await findSynopsis(b).catch(()=>null);
-    if(!r){sf2.disabled=false;sf2.textContent="Find it online";toast("No synopsis found online. You can type one with Edit book.");return}
+    if(!r){sf2.disabled=false;sf2.textContent="Find it online";toast(synMissMsg());return}
     try{await quickSave(books.find(x=>x.id===b.id)||b,{synopsis:r.text});toast(`Synopsis found on ${r.src}`);openBook(b.id)}catch(e){sf2.disabled=false;sf2.textContent="Find it online";handleApiError(e,"Couldn’t save")}};
   const fx=$("#bkFix",v);if(fx)fx.onclick=()=>openStraighten(books.find(x=>x.id===b.id)||b);
   const showSwatches=p=>{const sw=$(".swatches",v);if(!sw||!p)return;$$("i",sw).forEach((x,i)=>x.style.background=p[i]);sw.hidden=false};
@@ -1032,7 +1032,7 @@ function openForm(b,capture,pre,after){
     const key=[pb.title,pb.author,pb.isbn].join("|");if(auto&&key===synKey)return;synKey=key;const seq=++synSeq;
     st2.textContent="Looking for the synopsis online…";
     const r=await findSynopsis(pb).catch(()=>null);if(seq!==synSeq||!s.isConnected)return;
-    if(!r){st2.textContent="No synopsis found online.";return}
+    if(!r){st2.textContent=findSynopsis.busy?"Google Books didn’t answer: try again in a few minutes.":"No synopsis found online.";return}
     if(empty)apply("synopsis",r.text,"online");
     st2.textContent=empty?`Found on ${r.src}.`:`Found on ${r.src}, but you already have one: clear the box first to use it.`;
   };
@@ -2152,30 +2152,41 @@ function plainText(html){
 const LANG_CODE={English:"en",Portuguese:"pt",Spanish:"es",French:"fr",German:"de",Italian:"it"};
 // The found book must really be this one: most of the title's words in common.
 const titleMatch=(a,b)=>{const w=x=>norm(x).replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(z=>z.length>2&&!STOPWORDS.has(z));const A=w(a),B=new Set(w(b));return !!A.length&&A.filter(x=>B.has(x)).length>=Math.ceil(A.length*.6)};
+// Synopsis, free: Google Books (by ISBN, then by each form of the title), Open Library, then the opening of the
+// book's Wikipedia page (looked up by your Google script). findSynopsis.busy says whether Google Books didn't answer.
 async function findSynopsis(b){
-  const isbns=isbnDigits(b.isbn),lang=LANG_CODE[b.language]||"",cands=[];
+  const isbns=isbnDigits(b.isbn),lang=LANG_CODE[b.language]||"",cands=[],variants=titleVariants(b.title);let busy=false;
   const F="items(volumeInfo(title,description,language))";
-  for(const i of isbns.slice(0,2)){
-    const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=isbn:${i}&maxResults=2&fields=${F}`);
-    for(const it of (j&&j.items)||[]){const v=it.volumeInfo||{};if(v.description)cands.push({text:plainText(v.description),lang:v.language,src:"Google Books"})}
-    if(cands.length)break;
+  const gb=async q=>{const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8&fields=${F}`);if(j===null)busy=true;return (j&&j.items)||[]};
+  const add=(v,src)=>{if(v&&v.description)cands.push({text:plainText(v.description),lang:v.language,src})};
+  const enough=()=>cands.some(c=>c.text.length>=40&&(!lang||c.lang===lang));
+  for(const i of isbns.slice(0,2)){(await gb(`isbn:${i}`)).forEach(it=>add(it.volumeInfo,"Google Books"));if(enough())break}
+  if(!enough())for(const t of variants){
+    for(const q of [`intitle:${t}`+(b.author?` inauthor:${b.author}`:""),`"${t}" ${b.author||""}`.trim()]){
+      (await gb(q)).forEach(it=>{const v=it.volumeInfo||{};if(titleMatch(t,v.title||""))add(v,"Google Books")});
+      if(cands.length)break;
+    }
+    if(enough())break;
   }
-  if(!cands.length)for(const t of titleVariants(b.title)){
-    const q=`intitle:${t}`+(b.author?` inauthor:${b.author}`:"");
-    const j=await getJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=6&fields=${F}`);
-    for(const it of (j&&j.items)||[]){const v=it.volumeInfo||{};if(v.description&&titleMatch(t,v.title))cands.push({text:plainText(v.description),lang:v.language,src:"Google Books"})}
-    if(cands.length)break;
+  if(!enough()){
+    const keys=[];
+    if(isbns[0]){const o=await getJson(`https://openlibrary.org/search.json?q=isbn:${isbns[0]}&fields=key&limit=1`);const k=o&&o.docs&&o.docs[0]&&o.docs[0].key;if(k)keys.push(k)}
+    for(const t of variants){const o=await getJson(`https://openlibrary.org/search.json?title=${encodeURIComponent(t)}${b.author?`&author=${encodeURIComponent(b.author)}`:""}&fields=key,title&limit=3`);
+      ((o&&o.docs)||[]).forEach(d=>{if(d.key&&titleMatch(t,d.title||"")&&!keys.includes(d.key))keys.push(d.key)})}
+    for(const key of keys.slice(0,4)){
+      if(!/^\/works\/OL\d+W$/.test(key))continue;
+      const w=await getJson(`https://openlibrary.org${key}.json`);const dsc=w&&w.description;const t=typeof dsc==="string"?dsc:dsc&&dsc.value;
+      if(t){cands.push({text:plainText(String(t).replace(/\n?-{3,}[\s\S]*$/,"")),lang:"en",src:"Open Library"});break}
+    }
   }
-  if(!cands.some(c=>!lang||c.lang===lang)){
-    let key="";
-    if(isbns[0]){const o=await getJson(`https://openlibrary.org/search.json?q=isbn:${isbns[0]}&fields=key&limit=1`);key=o&&o.docs&&o.docs[0]&&o.docs[0].key}
-    if(!key){const t=titleVariants(b.title)[0]||"";const o=await getJson(`https://openlibrary.org/search.json?title=${encodeURIComponent(t)}${b.author?`&author=${encodeURIComponent(b.author)}`:""}&fields=key,title&limit=1`);const d=o&&o.docs&&o.docs[0];if(d&&titleMatch(t,d.title))key=d.key}
-    if(/^\/works\/OL\d+W$/.test(key||"")){const w=await getJson(`https://openlibrary.org${key}.json`);const dsc=w&&w.description;const t=typeof dsc==="string"?dsc:dsc&&dsc.value;
-      if(t)cands.push({text:plainText(String(t).replace(/\n?-{3,}[\s\S]*$/,"")),lang:"en",src:"Open Library"})}
+  if(!cands.some(c=>c.text.length>=40)&&conn){
+    try{const d=await api("wiki_summary",{title:b.title,author:b.author,language:b.language});if(d.text)cands.push({text:d.text,lang:d.lang||"en",src:"Wikipedia"})}catch(e){}
   }
+  findSynopsis.busy=busy;
   const good=cands.filter(c=>c.text.length>=40);
   return good.find(c=>lang&&c.lang===lang)||good[0]||null;
 }
+const synMissMsg=()=>findSynopsis.busy?"Google Books didn’t answer (it limits free use). Try again in a few minutes.":"No synopsis found online. You can type one with Edit book.";
 // Synopses for every book that has none yet: found online, saved straight away (edit any of them on the book's page).
 function openSynRun(){
   const todo=books.filter(b=>owned(b)&&!String(b.synopsis||"").trim()).sort((a,b)=>a.id-b.id);
