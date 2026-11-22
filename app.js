@@ -41,7 +41,7 @@ const ICON={
   star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
-const APP_VERSION="23";
+const APP_VERSION="26";
 let toastT;
 function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
@@ -214,6 +214,20 @@ $("#checkBtn").addEventListener("click",openCheck);
 $("#statsBtn").addEventListener("click",()=>openStats());
 $("#twinBtn").addEventListener("click",()=>openTwin());
 
+// Opening the app: books, budget and bookcases in one request (older scripts: three requests).
+async function boot(){
+  try{
+    const d=await api("boot");
+    books=d.books.map(b=>({...b,id:+b.id}));store.set("bc-books",books);
+    budget=d.budget;hasClaude=!!d.claude;store.set("bc-budget",budget);store.set("bc-claude",hasClaude);
+    twin={cases:d.cases||[]};twinOld=false;store.set("bc-twin",twin);
+    backlog=Array.isArray(d.backlog)?d.backlog:[];store.set("bc-backlog",backlog);
+    render();refreshTwin();
+  }catch(e){
+    if(e.code==="unknown_action"){loadBooks();loadStatus();loadTwin();return}
+    handleApiError(e,"Couldn’t load your books");
+  }
+}
 async function loadBooks(){
   try{const d=await api("list");books=d.books.map(b=>({...b,id:+b.id}));store.set("bc-books",books);render()}
   catch(e){handleApiError(e,"Couldn’t load your books")}
@@ -231,14 +245,14 @@ const budgetLeft=()=>hasClaude&&budget&&budget.spentUsd+0.03<=budget.budgetUsd&&
 /* ---------- sheets (settings, add, form) ---------- */
 const layer=$("#layer");
 function closeSheet(){layer.innerHTML="";syncScroll()}
-function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv")||$(".twinv")||$(".fixv"))?"hidden":""}
+function syncScroll(){document.body.style.overflow=(layer.innerHTML||$(".book")||$(".cam")||$(".statsv")||$(".twinv")||$(".fixv")||$(".charv"))?"hidden":""}
 function sheet(html){
   layer.innerHTML=`<div class="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   syncScroll();
   const scrim=layer.firstElementChild;scrim.addEventListener("click",e=>{if(e.target===scrim)closeSheet()});
   const s=scrim.firstElementChild;$$("[data-close]",s).forEach(x=>x.onclick=closeSheet);return s;
 }
-document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if($(".fixv")){closeFix();return}if(layer.innerHTML)closeSheet();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".fixrunv"))closeFixRun();else if($(".coverv"))closeCoverRun();else if($(".twinv"))closeTwin()});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape"||$(".cam"))return;if($(".fixv")){closeFix();return}if(layer.innerHTML)closeSheet();else if($(".charv"))closeCharView();else if($(".book"))closeBook();else if($(".statsv"))closeStats();else if($(".fixrunv"))closeFixRun();else if($(".coverv"))closeCoverRun();else if($(".twinv"))closeTwin()});
 
 function openSettings(){
   const s=sheet(`
@@ -251,7 +265,7 @@ function openSettings(){
      <p class="small" id="codeMsg"></p>
      <div class="actions" id="setActs">${conn?`<button class="btn danger left" id="forgetBtn">Disconnect this phone</button>`:""}<button class="btn primary" id="connectGo">Connect</button></div>
    </div>
-   ${conn?`<div class="actions"><button class="btn" id="reloadBtn">Reload books</button></div>`:""}
+   ${conn?`<section class="card stack spendc" id="spendCard" hidden aria-label="Claude spending"></section><div class="card stack" id="chQ" hidden></div><div class="actions"><button class="btn" id="reloadBtn">Reload books</button></div>`:""}
    <p class="small muted center">App version ${APP_VERSION}</p>`);
   const msg=$("#codeMsg",s);
   $("#connectGo",s).onclick=async()=>{
@@ -259,16 +273,18 @@ function openSettings(){
     let c;try{c=parseCode($("#codeIn",s).value)}catch(e){msg.className="small err";msg.textContent=e.message;return}
     msg.textContent="Checking…";
     try{const d=await api("status",{},c);conn=c;store.set("bc-conn",conn);budget=d.budget;hasClaude=!!d.claude;store.set("bc-budget",budget);store.set("bc-claude",hasClaude);
-      closeSheet();toast("Connected");books=[];render();loadBooks();loadTwin();}
+      closeSheet();toast("Connected");books=[];render();boot();}
     catch(e){msg.className="small err";msg.textContent=e.message}
   };
   if(conn){
     $("#forgetBtn",s).onclick=()=>{
       $("#setActs",s).innerHTML=`<div class="confirm"><span>Remove the connection and the saved book list from this phone? Your Google Sheet is not touched.</span><button class="btn" id="fNo">Keep</button><button class="btn dangerfill" id="fYes">Disconnect</button></div>`;
       $("#fNo",s).onclick=()=>{closeSheet();openSettings()};
-      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude","bc-twin","bc-backlog"].forEach(store.del);twin=null;backlog=[];conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
+      $("#fYes",s).onclick=()=>{["bc-conn","bc-books","bc-budget","bc-claude","bc-twin","bc-backlog","bc-chars"].forEach(store.del);charStore={};twin=null;backlog=[];conn=null;books=[];budget=null;hasClaude=false;photoCache.forEach(u=>URL.revokeObjectURL(u));photoCache.clear();closeSheet();closeBook();render();toast("Disconnected")};
     };
-    $("#reloadBtn",s).onclick=()=>{closeSheet();loadBooks();loadStatus()};
+    $("#reloadBtn",s).onclick=()=>{closeSheet();boot()};
+    paintCharQueue($("#chQ",s));
+    paintSpend($("#spendCard",s));
   }
 }
 
@@ -296,7 +312,7 @@ function openBook(id){
   const sp=spineOf(b),mode=coverMode(b),mk0=marksOf(b),is3d=true,pal=mode==="online"?paletteOf(b):null;
   const srcName=/openlibrary/.test(b.coverUrl||"")?"Open Library":"Google Books";
   const fact=(k,v,s)=>v?`<div class="fact"><div class="k">${k}</div><div class="v">${esc(v)}</div>${s?`<div class="s">${esc(s)}</div>`:""}</div>`:"";
-  const v=document.createElement("div");v.className="book";v.setAttribute("role","dialog");v.setAttribute("aria-label",b.title);
+  const v=document.createElement("div");v.className="book";v.dataset.id=b.id;v.setAttribute("role","dialog");v.setAttribute("aria-label",b.title);
   v.innerHTML=`<div class="book-inner ${sp.cls}">
     <div class="hero${is3d?" h3d":""}" id="hero">
       ${is3d?`<div class="hbackdrop" aria-hidden="true">${mode==="online"?`<img src="${esc(b.coverUrl)}" alt="" referrerpolicy="no-referrer">`:mode==="photo"?`<img alt="" data-photo="${b.id}">`:""}</div>
@@ -318,6 +334,7 @@ function openBook(id){
       ${b.comments?`<p class="quote">“${esc(b.comments)}”</p>`:""}
       ${b.synopsis?`<section class="card synopsis"><h3 class="sectlabel">Synopsis</h3><p class="syntext" id="synText">${esc(b.synopsis)}</p><button class="linkbtn" id="synMore" hidden aria-expanded="false">Read more</button></section>`
         :owned(b)?`<section class="card synopsis none"><span class="small muted">No synopsis yet.</span><button class="btn" id="synFind">Find it online</button></section>`:""}
+      <div id="chArea"></div>
       <div class="facts">
         ${fact("Genre",b.genre,b.subgenre)}
         ${fact("Edition",[b.publisher,b.editionYear].filter(Boolean).join(", "),[b.cover,b.special].filter(Boolean).join(" · "))}
@@ -334,6 +351,7 @@ function openBook(id){
   document.body.append(v);syncScroll();
   if(pal){const bi=$(".book-inner",v);bi.style.setProperty("--sp-bg",pal[0]);bi.style.setProperty("--sp-fg",pal[2]);applyPalette(bi,b)}
   wireCoverImages(v);
+  wireCharCard(v,b);
   const stx=$("#synText",v),smore=$("#synMore",v);
   if(stx&&smore){requestAnimationFrame(()=>{if(stx.scrollHeight>stx.clientHeight+4)smore.hidden=false});
     smore.onclick=()=>{const open=stx.classList.toggle("open");smore.textContent=open?"Show less":"Read more";smore.setAttribute("aria-expanded",String(open))}}
@@ -405,10 +423,10 @@ async function quickSave(b,changes){
 async function readAction(b,act,btn){
   btn.disabled=true;
   try{
-    if(act==="start"){await quickSave(b,{status:"Reading"});toast("Enjoy! Marked as reading");render();openBook(b.id)}
+    if(act==="start"){const saved=await quickSave(b,{status:"Reading"});toast("Enjoy! Marked as reading");render();openBook(b.id);autoChars(saved,"start")}
     else if(act==="dnf"){await quickSave(b,{status:"DNF"});toast("Marked as stopped (DNF)");render();openBook(b.id)}
     else if(act==="bought"){await quickSave(b,{status:"TBR"});render();toast("Moved to your shelves");openBook(b.id);openForm(books.find(x=>x.id===b.id))}
-    else if(act==="finish"){const saved=await quickSave(b,{status:"Read",dateRead:thisMonth()});render();openBook(b.id);askRating(saved)}
+    else if(act==="finish"){const saved=await quickSave(b,{status:"Read",dateRead:thisMonth()});render();openBook(b.id);askRating(saved);autoChars(saved,"finish")}
   }catch(e){btn.disabled=false;handleApiError(e,"Couldn’t update")}
 }
 function askRating(b){
@@ -2176,7 +2194,359 @@ function openSynRun(){
   };
 }
 
+/* ---------- characters: who's who, spoiler-safe ---------- */
+// Looked up online (Wikipedia, read by Claude in your Google script) when you start a book and when you finish it.
+// While you read, people you haven't met keep their role hidden until you tick "Met".
+let charStore=store.get("bc-chars",{}); // series key → {series, characters, links}
+let charsOld=false; // the Google script doesn't know characters yet
+const chFinding=new Set(); // "series key#book number" being looked up now
+const skey=s=>norm(s).replace(/[^a-z0-9]+/g," ").trim();
+const groupOfBook=b=>{const ser=String(b.series||"").trim(),name=ser||String(b.title||"").trim(),n=+b.seriesNo;return {name,key:skey(name),num:ser?(n>0?n:1):1,isSeries:!!ser}};
+const charData=g=>charStore[g.key]||null;
+function setCharData(d){if(!d||!d.series)return null;const k=skey(d.series);charStore[k]={series:d.series,characters:d.characters||[],links:d.links||[]};store.set("bc-chars",charStore);return charStore[k]}
+async function loadChars(g){try{const d=await api("chars_get",{series:g.name});charsOld=false;return setCharData(d)}catch(e){if(e.code==="unknown_action")charsOld=true;throw e}}
+// How far you've read in this series, from your catalogue.
+function readingState(g){
+  const inG=books.filter(b=>groupOfBook(b).key===g.key),num=b=>groupOfBook(b).num;
+  const readUpTo=inG.filter(b=>b.status==="Read").reduce((m,b)=>Math.max(m,num(b)),0);
+  const reading=inG.filter(b=>b.status==="Reading").reduce((m,b)=>Math.max(m,num(b)),0);
+  const titles={};inG.forEach(b=>{if(!titles[num(b)])titles[num(b)]=b.title});
+  return {readUpTo,reading,titles,nums:new Set(inG.filter(owned).map(num))};
+}
+const firstBook=c=>Math.min(c.first||99,...(c.books.length?c.books:[99]));
+// Known = met, added by you, or from a book you've finished.
+const isKnown=(c,rs,upTo=Infinity)=>{const f=firstBook(c);if(f<=Math.min(upTo,rs.readUpTo))return true;return (c.met||c.by==="me")&&(f<=upTo||c.books.some(n=>n<=upTo))};
+const linkShown=(l,rs,upTo)=>l.by==="me"||l.since<=Math.min(upTo,Math.max(rs.readUpTo,rs.reading));
+const CH_PAL=["#2C5F5B","#3E6B8A","#5A4E9A","#9A5B2E","#5F6E2A","#8A3B5A"],CH_OTHER="#6F6458";
+const LINK_COL={family:"#B5651D",friend:"#2F7D5B",work:"#8E9C93",foe:"#A3392F"};
+const LINK_NAME={family:"Family",friend:"Friend",work:"Team / work",foe:"Enemy"};
+function groupColors(chars){
+  const cnt={};chars.forEach(c=>{if(c.group)cnt[c.group]=(cnt[c.group]||0)+1});
+  const order=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]||a.localeCompare(b)),m={};
+  order.slice(0,CH_PAL.length).forEach((x,i)=>m[x]=CH_PAL[i]);
+  return {of:c=>m[c.group]||CH_OTHER,list:order.slice(0,CH_PAL.length).map(x=>[x,m[x]]),others:order.length>CH_PAL.length||chars.some(c=>!c.group)};
+}
+const initials=n=>String(n||"").replace(/^(dr|mr|mrs|ms|sir|lady|lord|captain|capt|prof)\.?\s+/i,"").split(/[\s-]+/).filter(Boolean).map(w=>w[0]).join("").slice(0,2).toUpperCase()||"?";
+const avHtml=(c,col,sz=32)=>`<span class="chav" data-col="${esc(col)}" data-sz="${sz}" aria-hidden="true">${esc(initials(c.name))}</span>`;
+function paintAv(root){$$(".chav[data-col]",root).forEach(x=>{x.style.background=x.dataset.col;const z=+x.dataset.sz||32;x.style.width=x.style.height=z+"px";x.style.fontSize=Math.round(z*.38)+"px"});$$("[data-lc]",root).forEach(x=>x.style.setProperty("--lc",x.dataset.lc))}
+const chTimes=n=>`${n} character${n===1?"":"s"}`;
+
+/* book page card */
+function charCardHtml(b){
+  if(!owned(b))return "";
+  const g=groupOfBook(b),d=charData(g),finding=chFinding.has(g.key+"#"+g.num);
+  const inBook=d?d.characters.filter(c=>c.books.includes(g.num)):[];
+  const canFind=hasClaude&&["Reading","Read","DNF"].includes(b.status);
+  if(charsOld&&!inBook.length)return ["Reading","Read"].includes(b.status)?`<section class="card chcard none"><span class="small muted">To see characters, update your Google script (“Characters” in the setup guide).</span></section>`:"";
+  if(finding)return `<section class="card chcard none" aria-live="polite"><span class="chspin" aria-hidden="true"></span><span class="small">Finding the characters on Wikipedia… about 20 seconds.</span></section>`;
+  if(!inBook.length){
+    if(b.chars==="none"||b.chars==="done")return `<section class="card chcard none"><span class="small muted">No characters found online for this book.</span><button class="btn" data-ch-add>Add someone</button></section>`;
+    if(!canFind)return "";
+    return `<section class="card chcard none"><div class="grow1"><b class="small">Characters</b><div class="small muted">From Wikipedia, read by Claude · about 1–2 cents</div></div><button class="btn" data-ch-find>Find characters</button></section>`;
+  }
+  const rs=readingState(g),col=groupColors(d.characters),reading=b.status==="Reading";
+  const known=c=>isKnown(c,rs,g.num)||b.status==="Read";
+  const list=inBook.slice().sort((x,y)=>(y.main.includes(g.num)-x.main.includes(g.num))||(known(y)-known(x))||(y.fav-x.fav)||x.name.localeCompare(y.name));
+  const open=document.querySelector(".book")?.dataset.chAll==="1",shown=open?list:list.slice(0,8);
+  const rows=shown.map(c=>{const k=known(c);return `<div class="chrow">
+      <button class="chmain" data-ch-open="${esc(c.id)}">${avHtml(c,col.of(c),30)}<span class="chtxt"><span class="chname">${esc(c.name)}${c.fav?` <span class="chfav" aria-label="favourite">♥\uFE0E</span>`:""}</span><span class="chrole">${k?esc(c.role||c.group||""):`<i>${reading?"Not met yet: tick when you meet them":"Not met yet"}</i>`}</span></span></button>
+      ${!k?`<button class="chmet" data-ch-met="${esc(c.id)}" aria-label="I’ve met ${esc(c.name)}">Met</button>`:c.main.includes(g.num)?`<span class="chtag">Main</span>`:""}</div>`}).join("");
+  const metN=inBook.filter(known).length;
+  return `<section class="card chcard">
+    <div class="chhead"><h3 class="sectlabel">Characters · ${inBook.length}</h3>${reading?`<span class="small muted">${metN} of ${inBook.length} met · no spoilers</span>`:""}</div>
+    <div class="chlist">${rows}</div>
+    ${list.length>shown.length?`<button class="linkbtn" data-ch-all>Show all ${list.length}</button>`:""}
+    <div class="chacts">${d.characters.length>=2?`<button class="btn primary" data-ch-map>Who’s who</button>`:""}<button class="btn" data-ch-add>Add someone</button>${b.status==="Read"&&b.chars!=="done"&&hasClaude?`<button class="btn" data-ch-find>Find all characters</button>`:""}</div>
+  </section>`;
+}
+function paintCharCard(v,b){const a=$("#chArea",v);if(!a)return;a.innerHTML=charCardHtml(b);paintAv(a)}
+function refreshCharCards(){
+  const v=$(".book");if(v){const b=books.find(x=>x.id===+v.dataset.id);if(b)paintCharCard(v,b)}
+  const cv=$(".charv");if(cv&&cv._render)cv._render();
+}
+async function wireCharCard(v,b){
+  const area=$("#chArea",v);if(!area)return;
+  const g=groupOfBook(b);
+  paintCharCard(v,b);
+  area.onclick=async e=>{
+    const t=e.target.closest("button");if(!t)return;
+    const cur=books.find(x=>x.id===b.id)||b;
+    if(t.hasAttribute("data-ch-find")){findChars(cur,cur.status==="Read"?"finish":"start");return}
+    if(t.hasAttribute("data-ch-add")){openCharForm(g,null);return}
+    if(t.hasAttribute("data-ch-map")){openCharView(g,"map");return}
+    if(t.hasAttribute("data-ch-all")){v.dataset.chAll="1";paintCharCard(v,cur);return}
+    if(t.dataset.chOpen){openCharacter(g,t.dataset.chOpen);return}
+    if(t.dataset.chMet){t.disabled=true;await saveChar(g,{id:t.dataset.chMet,met:true},"Marked as met");return}
+  };
+  if(conn&&(charData(g)||b.chars||["Reading","Read"].includes(b.status))){try{await loadChars(g)}catch(e){}if(v.isConnected)paintCharCard(v,books.find(x=>x.id===b.id)||b)}
+}
+async function findChars(b,mode,o={}){
+  const g=groupOfBook(b),k=g.key+"#"+g.num;
+  if(chFinding.has(k))return;
+  chFinding.add(k);refreshCharCards();
+  if(!o.quiet)toast("Finding the characters…");
+  try{
+    const d=await api("chars_find",{id:b.id,mode});charsOld=false;
+    setCharData(d);(d.books||[]).forEach(upsertBook);if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
+    const src=/^Wikipedia/.test(d.source||"")?" on Wikipedia":"";
+    toast(d.found?(mode==="start"?`${chTimes(d.found)} to meet in “${b.title}”${src}`:`${chTimes(d.found)} found${src}`):"No characters found online. You can add them yourself.");
+  }catch(e){if(e.code==="unknown_action")charsOld=true;if(!o.quiet||e.code!=="budget")handleApiError(e,"Couldn’t find the characters")}
+  finally{chFinding.delete(k);refreshCharCards()}
+}
+// Starting or finishing a book looks its characters up by itself (when Claude and the budget allow).
+function autoChars(b,mode){
+  if(!b||!conn||!hasClaude||!budgetLeft()||charsOld||!owned(b))return;
+  if(mode==="start"&&b.chars)return;
+  if(mode==="finish"&&(b.chars==="done"||b.chars==="none"))return;
+  findChars(b,mode,{quiet:true});
+}
+async function saveChar(g,character,okMsg){
+  try{const d=await api("chars_save",{series:g.name,character});setCharData(d);if(okMsg)toast(okMsg);refreshCharCards();return d.character}
+  catch(e){handleApiError(e,"Couldn’t save");refreshCharCards();return null}
+}
+
+/* one person */
+function openCharacter(g,id){
+  const d=charData(g);const c=d&&d.characters.find(x=>x.id===id);if(!c){closeSheet();return}
+  const rs=readingState(g),col=groupColors(d.characters),known=isKnown(c,rs);
+  const byId=new Map(d.characters.map(x=>[x.id,x]));
+  const maxN=Math.max(1,...d.characters.flatMap(x=>x.books),...rs.nums);
+  const short=c.name.replace(/^(dr|mr|mrs|ms|sir|lady|lord|captain|capt|prof)\.?\s+/i,"").split(/\s+/)[0];
+  const links=known?d.links.filter(l=>(l.from===c.id||l.to===c.id)&&linkShown(l,rs,Infinity)).map(l=>{const o=byId.get(l.from===c.id?l.to:l.from);return o&&isKnown(o,rs)?{l,o,txt:l.from===c.id?(l.label||LINK_NAME[l.type]):`${short} is their ${l.label||LINK_NAME[l.type].toLowerCase()}`}:null}).filter(Boolean):[];
+  const s=sheet(`<div class="sheet-head"><div class="chtop">${avHtml(c,col.of(c),56)}<div><div class="eyebrow">${esc(d.series)}</div><h2>${esc(c.name)}</h2><div class="sub">${esc([c.group,c.by==="me"?"added by you":""].filter(Boolean).join(" · "))}</div></div></div><button class="x" data-close aria-label="Close">×</button></div>
+    ${known?`${c.role?`<p class="chbio">${esc(c.role)}${c.roleAt&&g.isSeries?` <span class="small muted">(as of book ${esc(c.roleAt)})</span>`:""}</p>`:""}${c.aka.length?`<p class="small muted">Also called ${esc(c.aka.join(", "))}</p>`:""}`
+      :`<div class="card chhidden"><b>You haven’t met them yet</b><span class="small muted">Their role and links stay hidden until you do, so nothing is spoiled.</span><button class="btn primary" id="cpMet">I’ve met ${esc(short)}</button></div>`}
+    ${g.isSeries?`<div class="card stack"><div class="chhead"><span class="sectlabel">Appears in</span><span class="small muted">● on your shelves</span></div><div class="chbooks">${Array.from({length:Math.min(maxN,30)},(_,i)=>i+1).map(n=>`<span class="chbk${c.books.includes(n)||n===c.first?" in":""}" title="${esc(rs.titles[n]||"Book "+n)}">${n}${rs.nums.has(n)?`<i aria-label="on your shelves">●</i>`:""}</span>`).join("")}</div></div>`:""}
+    ${known?`<div class="card chlinks"><div class="chhead"><span class="sectlabel">Connections · ${links.length}</span><button class="linkbtn" id="cpLink">+ Add</button></div>
+      ${links.length?links.map(x=>`<div class="chrow"><button class="chmain" data-open="${esc(x.o.id)}">${avHtml(x.o,col.of(x.o),30)}<span class="chtxt"><span class="chname">${esc(x.o.name)}</span><span class="chrole">${esc(x.txt)}</span></span></button><span class="chltag" data-lc="${LINK_COL[x.l.type]}">${esc(LINK_NAME[x.l.type])}</span><button class="chx" data-unlink="${esc(x.o.id)}" aria-label="Remove the link with ${esc(x.o.name)}">×</button></div>`).join(""):`<p class="small muted">No connections yet.</p>`}</div>`:""}
+    <div class="card stack"><label class="sectlabel" for="cpNote">My note</label><textarea id="cpNote" class="chnote" maxlength="1000" placeholder="What you think of them, a quote, a theory…">${esc(c.note)}</textarea><div class="actions"><button class="btn" id="cpNoteSave" hidden>Save note</button></div></div>
+    <div id="cpConfirm"></div>
+    <div class="actions"><button class="btn danger left" id="cpDel">Remove</button><button class="btn" id="cpFav" aria-pressed="${c.fav}">${c.fav?"♥\uFE0E Favourite":"♡\uFE0E Favourite"}</button>${known&&c.met&&!isKnown({...c,met:false},rs)?`<button class="btn" id="cpUnmet">Not met yet</button>`:""}<button class="btn primary" id="cpEdit">Edit</button></div>`);
+  paintAv(s);
+  const again=()=>{if(s.isConnected)openCharacter(g,id)};
+  const met=$("#cpMet",s);if(met)met.onclick=async()=>{met.disabled=true;if(await saveChar(g,{id,met:true},`You’ve met ${short}`))again()};
+  const un=$("#cpUnmet",s);if(un)un.onclick=async()=>{un.disabled=true;if(await saveChar(g,{id,met:false}))again()};
+  $("#cpFav",s).onclick=async e=>{e.target.disabled=true;if(await saveChar(g,{id,fav:!c.fav},c.fav?"Removed from favourites":`${short} is a favourite`))again()};
+  const note=$("#cpNote",s),ns=$("#cpNoteSave",s);
+  note.oninput=()=>ns.hidden=note.value===c.note;
+  ns.onclick=async()=>{ns.disabled=true;if(await saveChar(g,{id,note:note.value},"Note saved"))again();else ns.disabled=false};
+  $("#cpEdit",s).onclick=()=>openCharForm(g,c);
+  const lk=$("#cpLink",s);if(lk)lk.onclick=()=>openLinkForm(g,c);
+  $("#cpDel",s).onclick=()=>{const a=$("#cpConfirm",s);
+    a.innerHTML=`<div class="confirm"><span>Remove ${esc(c.name)} and their connections from your guide to “${esc(d.series)}”?</span><button class="btn" id="cdNo">Keep</button><button class="btn dangerfill" id="cdYes">Remove</button></div>`;
+    $("#cdNo",s).onclick=()=>a.innerHTML="";
+    $("#cdYes",s).onclick=async e=>{e.target.disabled=true;try{const r=await api("chars_delete",{series:g.name,id});setCharData(r);closeSheet();refreshCharCards();toast("Removed")}catch(err){e.target.disabled=false;handleApiError(err,"Couldn’t remove")}}};
+  const cl=$(".chlinks",s);if(cl)cl.addEventListener("click",async e=>{
+    const o=e.target.closest("[data-open]");if(o){openCharacter(g,o.dataset.open);return}
+    const x=e.target.closest("[data-unlink]");if(x){x.disabled=true;try{const r=await api("link_delete",{series:g.name,from:id,to:x.dataset.unlink});setCharData(r);refreshCharCards();again()}catch(err){x.disabled=false;handleApiError(err,"Couldn’t remove the link")}}
+  });
+}
+function openCharForm(g,c){
+  const d=charData(g)||{characters:[]},rs=readingState(g);
+  const groups=[...new Set(d.characters.map(x=>x.group).filter(Boolean))].sort();
+  const num=rs.reading||rs.readUpTo||1;
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(g.name)}</div><h2>${c?"Edit "+esc(c.name):"Add someone"}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <form class="grid" id="chForm" novalidate>
+      <div class="f"><label for="cfName">Name</label><input id="cfName" maxlength="80" required value="${esc(c?c.name:"")}" autocomplete="off"></div>
+      <div class="f"><label for="cfAka">Also called <span class="muted">(comma between names)</span></label><input id="cfAka" maxlength="200" value="${esc(c?c.aka.join(", "):"")}" autocomplete="off"></div>
+      <div class="f"><label for="cfGroup">Group <span class="muted">(family, crew, house…)</span></label><input id="cfGroup" maxlength="40" list="cfGroups" value="${esc(c?c.group:"")}" autocomplete="off"><datalist id="cfGroups">${groups.map(x=>`<option value="${esc(x)}"></option>`).join("")}</datalist></div>
+      <div class="f"><label for="cfRole">Who they are</label><textarea id="cfRole" maxlength="200">${esc(c?c.role:"")}</textarea></div>
+      ${g.isSeries?`<div class="f"><label for="cfBooks">In books <span class="muted">(numbers in the series)</span></label><input id="cfBooks" inputmode="numeric" maxlength="60" value="${esc(c?c.books.join(", "):String(num))}"></div>`:""}
+      <p class="small err" id="cfMsg"></p>
+    </form>
+    <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cfSave">${c?"Save":"Add"}</button></div>`);
+  $("#cfSave",s).onclick=async e=>{
+    const name=$("#cfName",s).value.trim();if(!name){$("#cfMsg",s).textContent="A name is required.";$("#cfName",s).focus();return}
+    const bk=$("#cfBooks",s),list=bk?bk.value.split(/[,;\s]+/).map(Number).filter(n=>n>0&&n<1000):[1];
+    const ch={name,aka:$("#cfAka",s).value.split(",").map(x=>x.trim()).filter(Boolean),group:$("#cfGroup",s).value.trim(),role:$("#cfRole",s).value.trim(),books:list.length?list:[num]};
+    if(c)ch.id=c.id;
+    e.target.disabled=true;
+    const saved=await saveChar(g,ch,c?"Saved":`${name} added`);
+    if(saved)openCharacter(g,saved.id);else e.target.disabled=false;
+  };
+  $("#cfName",s).focus();
+}
+function openLinkForm(g,c){
+  const d=charData(g),rs=readingState(g);
+  const others=d.characters.filter(x=>x.id!==c.id&&isKnown(x,rs)).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!others.length){toast("Meet someone else first: there’s nobody to connect yet.");return}
+  let type="friend";
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(c.name)}</div><h2>Add a connection</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="grid">
+      <div class="f"><label for="lfWho">Who</label><select id="lfWho">${others.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></div>
+      <div class="f"><span class="lbl" id="lfTypeL">Kind</span><div class="seg2 wrap4" role="group" aria-labelledby="lfTypeL">${Object.keys(LINK_NAME).map(k=>`<button type="button" data-type="${k}" aria-pressed="${k===type}">${LINK_NAME[k]}</button>`).join("")}</div></div>
+      <div class="f"><label for="lfLabel" id="lfLabelL">What are they to ${esc(c.name)}?</label><input id="lfLabel" maxlength="24" placeholder="e.g. daughter, best friend, boss" autocomplete="off"></div>
+    </div>
+    <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="lfSave">Add</button></div>`);
+  $(".seg2",s).onclick=e=>{const t=e.target.closest("[data-type]");if(!t)return;type=t.dataset.type;$$("[data-type]",s).forEach(x=>x.setAttribute("aria-pressed",String(x===t)))};
+  $("#lfSave",s).onclick=async e=>{e.target.disabled=true;
+    try{const r=await api("link_save",{series:g.name,link:{from:c.id,to:$("#lfWho",s).value,type,label:$("#lfLabel",s).value.trim(),since:rs.reading||rs.readUpTo||1}});setCharData(r);toast("Connection added");refreshCharCards();openCharacter(g,c.id)}
+    catch(err){e.target.disabled=false;handleApiError(err,"Couldn’t add the connection")}};
+}
+
+/* who's who: connection map and families */
+function closeCharView(){const v=$(".charv");if(v)v.remove();syncScroll()}
+function openCharView(g,tab){
+  closeCharView();
+  const rs=readingState(g),maxAllowed=Math.max(rs.readUpTo,rs.reading,1);
+  const st2={tab:tab==="family"?"family":"map",upTo:maxAllowed,sel:null};
+  const v=document.createElement("div");v.className="charv";v.setAttribute("role","dialog");v.setAttribute("aria-label",`Who’s who: ${g.name}`);
+  v._render=()=>renderCharView(v,g,st2);
+  document.body.append(v);syncScroll();v._render();
+  v.addEventListener("click",e=>{
+    const t=e.target.closest("button,[data-node]");if(!t)return;
+    if(t.id==="cvBack"){closeCharView();return}
+    if(t.dataset.tab){st2.tab=t.dataset.tab;v._render();return}
+    if(t.dataset.upto){if(t.getAttribute("aria-disabled")==="true"){toast("Not read yet: no spoilers.");return}st2.upTo=+t.dataset.upto;st2.sel=null;v._render();return}
+    if(t.dataset.node){st2.sel=st2.sel===t.dataset.node?null:t.dataset.node;v._render();const n=$(`[data-node="${CSS.escape(t.dataset.node)}"]`,v);if(n)n.focus();return}
+    if(t.dataset.open){openCharacter(g,t.dataset.open);return}
+    if(t.id==="cvClear"){st2.sel=null;v._render();return}
+  });
+  v.addEventListener("keydown",e=>{const n=e.target.closest&&e.target.closest("[data-node]");if(n&&(e.key==="Enter"||e.key===" ")){e.preventDefault();n.dispatchEvent(new MouseEvent("click",{bubbles:true}))}});
+  if(conn)loadChars(g).then(()=>{if(v.isConnected)v._render()}).catch(()=>{});
+}
+function visibleCast(d,rs,upTo){
+  const chars=d.characters.filter(c=>isKnown(c,rs,upTo)&&(firstBook(c)<=upTo||c.books.some(n=>n<=upTo)));
+  const ids=new Set(chars.map(c=>c.id));
+  const links=d.links.filter(l=>ids.has(l.from)&&ids.has(l.to)&&(l.by==="me"||l.since<=upTo)&&linkShown(l,rs,upTo));
+  return {chars,links};
+}
+function renderCharView(v,g,s){
+  const d=charData(g)||{series:g.name,characters:[],links:[]},rs=readingState(g),maxAllowed=Math.max(rs.readUpTo,rs.reading,1);
+  if(s.upTo>maxAllowed)s.upTo=maxAllowed;
+  const col=groupColors(d.characters);
+  const maxN=g.isSeries?Math.min(30,Math.max(maxAllowed,...d.characters.flatMap(c=>c.books),...rs.nums)):1;
+  const {chars,links}=visibleCast(d,rs,s.upTo);
+  const head=`<div class="statsv-head"><button class="roundbtn" id="cvBack" aria-label="Back">${ICON.back}</button><div class="grow1"><div class="eyebrow cvser">${esc(d.series)}</div><h1>${s.tab==="map"?"Who’s who":"Families"}</h1></div></div>
+    <div class="seg2 cvtabs" role="group" aria-label="View"><button data-tab="map" aria-pressed="${s.tab==="map"}">Map</button><button data-tab="family" aria-pressed="${s.tab==="family"}">Family tree</button></div>`;
+  const upLbl=s.upTo===rs.reading&&rs.reading>rs.readUpTo?"the one you’re reading: only people you’ve met":s.upTo===rs.readUpTo?"the last one you read":"";
+  const chips=g.isSeries&&maxN>1?`<div class="cvup"><div class="chhead"><b class="small">Up to book ${s.upTo}${rs.titles[s.upTo]?` · ${esc(rs.titles[s.upTo])}`:""}</b><span class="small muted">${upLbl}</span></div>
+    <div class="chips cvchips" role="group" aria-label="Up to book">${Array.from({length:maxN},(_,i)=>i+1).map(n=>`<button class="chip" data-upto="${n}" aria-pressed="${n===s.upTo}"${n>maxAllowed?` aria-disabled="true" aria-label="Book ${n}: not read yet"`:""}>${n>maxAllowed?`<svg class="lock" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`:""}${n}</button>`).join("")}</div></div>`:"";
+  let body="";
+  if(!chars.length)body=`<div class="notice"><strong>Nobody yet</strong><span>${d.characters.length?"Tick the people you meet on the book’s page, or finish the book, and they appear here.":"Start or finish a book of this series to find its characters."}</span></div>`;
+  else if(s.tab==="map")body=mapHtml(v,chars,links,col,s);
+  else body=familiesHtml(chars,links,col);
+  const legend=s.tab==="map"&&chars.length?`<div class="cvlegend">${Object.keys(LINK_NAME).map(k=>`<span><i class="lnk ${k}" data-lc="${LINK_COL[k]}"></i>${LINK_NAME[k]}</span>`).join("")}</div>
+    <div class="cvlegend">${col.list.map(([n,c])=>`<span><i class="gdot" data-lc="${c}"></i>${esc(n)}</span>`).join("")}${col.others?`<span><i class="gdot" data-lc="${CH_OTHER}"></i>Others</span>`:""}</div>`:"";
+  const sel=s.tab==="map"&&s.sel&&chars.find(c=>c.id===s.sel);
+  const selCard=sel?`<div class="card cvsel">${avHtml(sel,col.of(sel),40)}<div class="grow1"><b>${esc(sel.name)}</b><div class="small muted">${esc(sel.role||sel.group||"")}</div><div class="small muted">${links.filter(l=>l.from===sel.id||l.to===sel.id).length} links</div></div><button class="btn primary" data-open="${esc(sel.id)}">Open</button></div>`
+    :s.tab==="map"&&chars.length?`<p class="small muted center">Tap a person to see their links.</p>`:"";
+  v.innerHTML=`<div class="statsv-inner">${head}${chips}${body}${legend}${selCard}</div>`;
+  paintAv(v);
+}
+function layoutGraph(nodes,edges,W,H,pad){
+  const n=nodes.length,idx=new Map(nodes.map((x,i)=>[x.id,i])),deg=nodes.map(()=>0);
+  edges.forEach(e=>{deg[idx.get(e.from)]++;deg[idx.get(e.to)]++});
+  const order=nodes.map((_,i)=>i).sort((a,b)=>deg[b]-deg[a]||a-b),cx=W/2,cy=H/2;
+  const P=nodes.map(()=>[cx,cy]);
+  order.forEach((i,k)=>{if(!k)return;const a=k*2.399963,r=Math.min(W,H)*.13*Math.sqrt(k);P[i]=[cx+r*Math.cos(a),cy+r*Math.sin(a)]});
+  const K=Math.sqrt(W*H/Math.max(1,n))*.7;let t=W/6;
+  for(let it=0;it<300;it++){
+    const D=nodes.map(()=>[0,0]);
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){let dx=P[i][0]-P[j][0],dy=P[i][1]-P[j][1];const dd=Math.hypot(dx,dy)||.01,f=K*K/dd;dx/=dd;dy/=dd;D[i][0]+=dx*f;D[i][1]+=dy*f;D[j][0]-=dx*f;D[j][1]-=dy*f}
+    edges.forEach(e=>{const i=idx.get(e.from),j=idx.get(e.to);let dx=P[i][0]-P[j][0],dy=P[i][1]-P[j][1];const dd=Math.hypot(dx,dy)||.01,f=dd*dd/K;dx/=dd;dy/=dd;D[i][0]-=dx*f;D[i][1]-=dy*f;D[j][0]+=dx*f;D[j][1]+=dy*f});
+    for(let i=0;i<n;i++){D[i][0]+=(cx-P[i][0])*.35;D[i][1]+=(cy-P[i][1])*.35;
+      const dd=Math.hypot(D[i][0],D[i][1])||.01,m=Math.min(dd,t);
+      P[i][0]=Math.max(pad[i][0],Math.min(W-pad[i][0],P[i][0]+D[i][0]/dd*m));P[i][1]=Math.max(pad[i][1],Math.min(H-pad[i][1]-14,P[i][1]+D[i][1]/dd*m))}
+    t*=.985;
+  }
+  return P;
+}
+function mapHtml(v,chars,links,col,s){
+  let nodes=chars;
+  const deg=new Map(chars.map(c=>[c.id,0]));links.forEach(l=>{deg.set(l.from,deg.get(l.from)+1);deg.set(l.to,deg.get(l.to)+1)});
+  if(nodes.length>40)nodes=nodes.slice().sort((a,b)=>deg.get(b.id)-deg.get(a.id)||(b.main.length-a.main.length)).slice(0,40);
+  const ids=new Set(nodes.map(c=>c.id)),edges=links.filter(l=>ids.has(l.from)&&ids.has(l.to));
+  const W=Math.max(300,Math.min(688,(v.clientWidth||window.innerWidth)-32)),H=Math.round(Math.min(620,Math.max(400,W*1.2)));
+  const R=nodes.map(c=>Math.min(26,13+deg.get(c.id)*2));
+  const P=layoutGraph(nodes,edges,W,H,R.map(r=>[r+30,r+6]));
+  const at=new Map(nodes.map((c,i)=>[c.id,i]));
+  const sel=s.sel&&ids.has(s.sel)?s.sel:null;
+  const near=sel?new Set([sel,...edges.filter(l=>l.from===sel||l.to===sel).flatMap(l=>[l.from,l.to])]):null;
+  const showLabels=edges.length<=12;
+  let lines="",labels="",dots="";
+  // Link labels go where they don't cover a person or another label (else they're left out; tap a person to see theirs).
+  const boxes=[];nodes.forEach((c,i)=>{const [x,y]=P[i],r=R[i],w=Math.min(16,c.name.length)*6.4;boxes.push([x-r,y-r,x+r,y+r],[x-w/2,y+r+2,x+w/2,y+r+17])});
+  const hit=q=>boxes.some(z=>q[0]<z[2]&&q[2]>z[0]&&q[1]<z[3]&&q[3]>z[1]);
+  edges.forEach(l=>{const a=P[at.get(l.from)],b=P[at.get(l.to)],on=!sel||l.from===sel||l.to===sel;
+    lines+=`<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke="${LINK_COL[l.type]}" stroke-width="${l.type==="work"?1.5:2.5}"${l.type==="foe"?` stroke-dasharray="5 4"`:""} stroke-linecap="round" opacity="${on?1:.15}"/>`});
+  edges.forEach(l=>{const on=!sel||l.from===sel||l.to===sel;if(!l.label||!(sel?on:showLabels))return;
+    const a=P[at.get(l.from)],b=P[at.get(l.to)],w=Math.min(150,l.label.length*5.6+12);
+    for(const t of [.5,.4,.6,.3,.7]){const x=a[0]+(b[0]-a[0])*t,y=a[1]+(b[1]-a[1])*t,q=[x-w/2,y-8,x+w/2,y+8];if(hit(q))continue;boxes.push(q);
+      labels+=`<rect x="${(x-w/2).toFixed(1)}" y="${(y-8).toFixed(1)}" width="${w.toFixed(1)}" height="16" rx="8" fill="#F4F7F4" stroke="${LINK_COL[l.type]}"/><text x="${x.toFixed(1)}" y="${(y+3.5).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="600" fill="#1E2420">${esc(l.label)}</text>`;break}});
+  nodes.forEach((c,i)=>{const [x,y]=P[i],r=R[i],dim=near&&!near.has(c.id);
+    dots+=`<g data-node="${esc(c.id)}" class="chnode" tabindex="0" role="button" aria-pressed="${c.id===sel}" aria-label="${esc(c.name)}${c.group?", "+esc(c.group):""}" opacity="${dim?.3:1}">
+      ${c.id===sel?`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r+5}" fill="none" stroke="#1E2420" stroke-width="2"/>`:""}
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${col.of(c)}" stroke="#F4F7F4" stroke-width="2.5"/>
+      <text x="${x.toFixed(1)}" y="${(y+r*.36).toFixed(1)}" text-anchor="middle" font-family="Oswald, sans-serif" font-weight="600" font-size="${Math.round(r*.8)}" fill="#F4F7F4">${esc(initials(c.name))}</text>
+      <text x="${x.toFixed(1)}" y="${(y+r+13).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="600" fill="#1E2420" stroke="#F4F7F4" stroke-width="3" paint-order="stroke">${esc(c.name.length>16?c.name.slice(0,15)+"…":c.name)}</text></g>`});
+  return `<div class="card cvmap"><svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Connection map of ${nodes.length} characters">${lines}${labels}${dots}</svg></div>${chars.length>nodes.length?`<p class="small muted center">Showing the ${nodes.length} most connected of ${chars.length}.</p>`:""}`;
+}
+function familiesHtml(chars,links,col){
+  const fam=links.filter(l=>l.type==="family");
+  if(!fam.length)return `<div class="notice"><strong>No families yet</strong><span>Family links appear here when they’re found online, or add one from a person’s page: Connections › Add › Family.</span></div>`;
+  const byId=new Map(chars.map(c=>[c.id,c])),adj=new Map();
+  fam.forEach(l=>{[l.from,l.to].forEach(x=>{if(!adj.has(x))adj.set(x,[])});adj.get(l.from).push(l);adj.get(l.to).push(l)});
+  const seen=new Set(),groups=[];
+  [...adj.keys()].forEach(id=>{if(seen.has(id))return;const comp=[],q=[id];seen.add(id);
+    while(q.length){const x=q.shift();comp.push(x);adj.get(x).forEach(l=>{const o=l.from===x?l.to:l.from;if(!seen.has(o)){seen.add(o);q.push(o)}})}
+    groups.push(comp)});
+  groups.sort((a,b)=>b.length-a.length);
+  return groups.map(comp=>{
+    const root=comp.slice().sort((a,b)=>adj.get(b).length-adj.get(a).length)[0],rc=byId.get(root);
+    const ls=fam.filter(l=>comp.includes(l.from)).sort((a,b)=>(b.from===root)-(a.from===root));
+    const surname=rc.name.split(/\s+/).length>1?rc.name.split(/\s+/).slice(-1)[0]:rc.name;
+    return `<section class="card chfam"><h3 class="sectlabel">${esc(surname)}’s family · ${comp.length}</h3>
+      <button class="chroot" data-open="${esc(rc.id)}">${avHtml(rc,col.of(rc),40)}<span class="chtxt"><span class="chname">${esc(rc.name)}</span><span class="chrole">${esc(rc.role||rc.group||"")}</span></span></button>
+      <div class="chtree">${ls.map(l=>{const a=byId.get(l.from),b=byId.get(l.to);return `<button class="chmain" data-open="${esc(b.id)}">${avHtml(b,col.of(b),30)}<span class="chtxt"><span class="chname">${esc(b.name)}</span><span class="chrole">${esc(a.id===root?(l.label||"family"):`${a.name}’s ${l.label||"family"}`)}</span></span></button>`}).join("")}</div></section>`;
+  }).join("");
+}
+/* settings: books you read before */
+async function paintCharQueue(box){
+  if(!box||!conn)return;
+  try{
+    const {queue:q}=await api("chars_queue");if(!box.isConnected)return;
+    box.hidden=false;
+    box.innerHTML=`<div class="sectlabel">Characters of books you’ve read</div>
+      <p class="small">${q.total?`${q.done} of ${q.total} done${q.left?` · ${q.paused?"paused":`about ${q.perDay} a day, ${q.days} day${q.days===1?"":"s"} to go`}`:" · all done"}`:"No books marked as read yet."}</p>
+      ${q.scheduled?"":`<p class="small muted">Not running yet: in your Google script, run <span class="mono">enableCharacters</span> once.</p>`}
+      <p class="small muted">Uses at most half of your monthly Claude budget, so photo reading always has room.</p>
+      ${q.left&&q.scheduled?`<div class="actions"><button class="btn" id="cqTog">${q.paused?"Resume":"Pause"}</button></div>`:""}`;
+    const tg=$("#cqTog",box);if(tg)tg.onclick=async()=>{tg.disabled=true;try{await api("chars_queue_set",{paused:!q.paused});paintCharQueue(box)}catch(e){tg.disabled=false;handleApiError(e,"Couldn’t change it")}};
+  }catch(e){if(box.isConnected)box.hidden=true}
+}
+
+/* ---------- Claude spending (in Settings) ---------- */
+const SPEND_NAMES={photos:"Book photos",shelves:"Shelf photos",characters:"Characters",suggestions:"What to read next",corners:"Straightening photos"};
+const usd=n=>"$"+(+n||0).toFixed(2);
+const monthName=(m,long)=>{const x=String(m).match(/^(\d{4})-(\d\d)$/);return x?new Date(+x[1],+x[2]-1,1).toLocaleDateString("en-GB",{month:long?"long":"short",year:"numeric"}):m};
+async function paintSpend(box){
+  if(!box||!conn)return;
+  let d;try{d=await api("spend_history")}catch(e){if(box.isConnected)box.hidden=true;return}
+  if(!box.isConnected)return;
+  const cap=+d.budget.budgetUsd||2,now=d.budget.month,cur=d.months.find(x=>x.month===now)||{month:now,spentUsd:0,reads:0,kinds:{}};
+  const left=Math.max(0,cap-cur.spentUsd),reset=(()=>{const x=now.split("-");return new Date(+x[0],+x[1],1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})})();
+  const kinds=Object.entries(cur.kinds||{}).filter(([,v])=>v.usd>0||v.calls>0).sort((a,b)=>b[1].usd-a[1].usd);
+  const kmax=Math.max(.0001,...kinds.map(([,v])=>v.usd));
+  const months=d.months.filter(x=>x.spentUsd>0||x.month===now).slice(-12).reverse();
+  const first=d.months.find(x=>x.spentUsd>0);
+  const pct=x=>Math.max(x>0?1.5:0,Math.min(100,x)).toFixed(1);
+  box.innerHTML=`<div class="chhead"><h3 class="sectlabel">Claude spending</h3><span class="small muted">${reads(cur.reads)} this month</span></div>
+    <div class="spnow"><b>${usd(cur.spentUsd)}</b><span class="small muted">of your ${usd(cap)} monthly cap · ${usd(left)} left · starts again on ${reset}</span></div>
+    <div class="spbar" role="img" aria-label="${(100*cur.spentUsd/cap).toFixed(0)}% of the monthly cap used"><span data-w="${pct(100*cur.spentUsd/cap)}"></span></div>
+    ${kinds.length?`<div class="sprows" role="table" aria-label="This month by feature">${kinds.map(([k,v])=>`<div class="sprow" role="row"><span role="cell">${esc(SPEND_NAMES[k]||k)} <span class="muted">· ${v.calls}</span></span><span class="sptrack" role="presentation"><span data-w="${pct(100*v.usd/kmax)}"></span></span><span role="cell" class="spv">${usd(v.usd)}</span></div>`).join("")}</div>`
+      :`<p class="small muted">The split by feature starts from this update.</p>`}
+    ${months.length>1||first&&first.month!==now?`<div class="sectlabel spm">By month</div><div class="sprows" role="table" aria-label="Spending by month">${months.map(m=>`<div class="sprow" role="row"><span role="cell">${esc(monthName(m.month))}</span><span class="sptrack" role="presentation"><span data-w="${pct(100*m.spentUsd/cap)}"></span></span><span role="cell" class="spv">${usd(m.spentUsd)}</span></div>`).join("")}</div>`:""}
+    <p class="sptotal"><b>${usd(d.totalUsd)}</b> <span class="small muted">in total${first?` since ${esc(monthName(first.month,true))}`:""}</span></p>
+    <p class="small muted">The app counts each use at a slightly higher price than Anthropic charges, so it never goes over your cap. Your exact bill is in the Anthropic Console (console.anthropic.com).</p>`;
+  $$("[data-w]",box).forEach(x=>x.style.width=x.dataset.w+"%");
+  box.hidden=false;
+}
+const reads=n=>`${n||0} use${n===1?"":"s"}`;
+
 /* ---------- boot ---------- */
 render();
-if(conn){loadBooks();loadStatus();loadTwin()}
+if(conn)boot();
+// Keeps the app's files on this phone, so it opens straight away (and with a weak signal).
+if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost"))window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
 })();
