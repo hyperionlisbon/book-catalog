@@ -748,3 +748,8 @@ body.searching .fab{display:none}
 .spm{margin-top:6px}
 .sptotal{margin:4px 0 0}
 .sptotal b{font-family:var(--f-spine);font-size:20px;font-weight:600}
+.chwhy{margin:0}
+.chmany{width:100%;min-height:200px;border:1.5px solid transparent;background:var(--paper);border-radius:10px;padding:10px 12px;font-size:16px;line-height:1.5;resize:vertical}
+.chmany:focus{border-color:var(--ink);outline:none}
+.synlinks{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.synbtns{display:flex;gap:8px;flex-wrap:wrap}

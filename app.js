@@ -41,7 +41,7 @@ const ICON={
   star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
-const APP_VERSION="28";
+const APP_VERSION="30";
 let toastT;
 function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
@@ -332,8 +332,8 @@ function openBook(id){
     <div class="book-body">
       ${b.coverUrl&&b.hasPhoto?`<div class="card covershown"><div class="sectlabel">Cover shown</div><div class="seg2"><button data-pref="" aria-pressed="${mode==="online"}">Online cover</button><button data-pref="photo" aria-pressed="${mode==="photo"}">My photo</button></div><div class="small muted">Both are kept: switch any time.</div></div>`:""}
       ${b.comments?`<p class="quote">“${esc(b.comments)}”</p>`:""}
-      ${b.synopsis?`<section class="card synopsis"><h3 class="sectlabel">Synopsis</h3><p class="syntext" id="synText">${esc(b.synopsis)}</p><button class="linkbtn" id="synMore" hidden aria-expanded="false">Read more</button></section>`
-        :owned(b)?`<section class="card synopsis none"><span class="small muted">No synopsis yet.</span><button class="btn" id="synFind">Find it online</button></section>`:""}
+      ${b.synopsis?`<section class="card synopsis"><h3 class="sectlabel">Synopsis</h3><p class="syntext" id="synText">${esc(b.synopsis)}</p><div class="synlinks"><button class="linkbtn" id="synMore" hidden aria-expanded="false">Read more</button>${hasClaude?`<button class="linkbtn" id="synBack">Use the back cover instead</button>`:""}</div></section>`
+        :owned(b)?`<section class="card synopsis none"><span class="small muted">No synopsis yet.</span><span class="synbtns"><button class="btn" id="synFind">Find it online</button>${hasClaude?`<button class="btn" id="synBack">${ICON.cam}Back cover</button>`:""}</span></section>`:""}
       <div id="chArea"></div>
       <div class="facts">
         ${fact("Genre",b.genre,b.subgenre)}
@@ -359,6 +359,7 @@ function openBook(id){
     const r=await findSynopsis(b).catch(()=>null);
     if(!r){sf2.disabled=false;sf2.textContent="Find it online";toast(synMissMsg());return}
     try{await quickSave(books.find(x=>x.id===b.id)||b,{synopsis:r.text});toast(`Synopsis found on ${r.src}`);openBook(b.id)}catch(e){sf2.disabled=false;sf2.textContent="Find it online";handleApiError(e,"Couldn’t save")}};
+  const sb=$("#synBack",v);if(sb)sb.onclick=()=>readBackCover(books.find(x=>x.id===b.id)||b);
   const fx=$("#bkFix",v);if(fx)fx.onclick=()=>openStraighten(books.find(x=>x.id===b.id)||b);
   const showSwatches=p=>{const sw=$(".swatches",v);if(!sw||!p)return;$$("i",sw).forEach((x,i)=>x.style.background=p[i]);sw.hidden=false};
   if(pal)showSwatches(pal);
@@ -2187,6 +2188,21 @@ async function findSynopsis(b){
   return good.find(c=>lang&&c.lang===lang)||good[0]||null;
 }
 const synMissMsg=()=>findSynopsis.busy?"Google Books didn’t answer (it limits free use). Try again in a few minutes.":"No synopsis found online. You can type one with Edit book.";
+// The blurb, read from a photo of the back cover (Claude copies the printed text, about 1 cent).
+function readBackCover(b){
+  if(!budgetLeft()){toast("Monthly Claude limit reached. It resets on the 1st.");return}
+  openCamera({steps:[["Back cover","Fit the text of the blurb inside the frame"],["Inside flap","Optional: if the blurb continues on a flap"]],max:2},async r=>{
+    if(!r.photos.length)return;
+    toast("Claude is reading the back cover…");
+    try{
+      const d=await api("read",{images:await Promise.all(r.photos.map(p=>blobToB64(p.blob)))});
+      if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
+      const text=d.result&&d.result.synopsis;
+      if(!text){toast("No blurb found in the photo. Try a straighter, closer photo of the text.");return}
+      await quickSave(books.find(x=>x.id===b.id)||b,{synopsis:text});toast("Synopsis read from the back cover");render();openBook(b.id);
+    }catch(e){handleApiError(e,"Couldn’t read the back cover")}
+  });
+}
 // Synopses for every book that has none yet: found online, saved straight away (edit any of them on the book's page).
 function openSynRun(){
   const todo=books.filter(b=>owned(b)&&!String(b.synopsis||"").trim()).sort((a,b)=>a.id-b.id);
@@ -2217,6 +2233,7 @@ function openSynRun(){
 let charStore=store.get("bc-chars",{}); // series key → {series, characters, links}
 let charsOld=false; // the Google script doesn't know characters yet
 const chFinding=new Set(); // "series key#book number" being looked up now
+const chFailed=new Set(); // lookups that went wrong this visit (the card then offers to try again or add people)
 const skey=s=>norm(s).replace(/[^a-z0-9]+/g," ").trim();
 const groupOfBook=b=>{const ser=String(b.series||"").trim(),name=ser||String(b.title||"").trim(),n=+b.seriesNo;return {name,key:skey(name),num:ser?(n>0?n:1):1,isSeries:!!ser}};
 const charData=g=>charStore[g.key]||null;
@@ -2249,17 +2266,24 @@ function paintAv(root){$$(".chav[data-col]",root).forEach(x=>{x.style.background
 const chTimes=n=>`${n} character${n===1?"":"s"}`;
 
 /* book page card */
+const NONFIC=/non-?fiction|biography|memoir|history|science books|travel/i;
+const isNonFiction=b=>NONFIC.test(String(b.genre||""))&&!/historical fiction|historical fantasy|science fiction/i.test(String(b.genre||""));
 function charCardHtml(b){
   if(!owned(b))return "";
   const g=groupOfBook(b),d=charData(g),finding=chFinding.has(g.key+"#"+g.num);
   const inBook=d?d.characters.filter(c=>c.books.includes(g.num)):[];
   const canFind=hasClaude&&["Reading","Read","DNF"].includes(b.status);
   if(charsOld&&!inBook.length)return ["Reading","Read"].includes(b.status)?`<section class="card chcard none"><span class="small muted">To see characters, update your Google script (“Characters” in the setup guide).</span></section>`:"";
-  if(finding)return `<section class="card chcard none" aria-live="polite"><span class="chspin" aria-hidden="true"></span><span class="small">Finding the characters on Wikipedia… about 20 seconds.</span></section>`;
+  const failed=chFailed.has(g.key+"#"+g.num);
+  if(finding)return `<section class="card chcard none" aria-live="polite"><span class="chspin" aria-hidden="true"></span><span class="small">Finding the characters… about 10–20 seconds.</span></section>`;
   if(!inBook.length){
-    if(b.chars==="none"||b.chars==="done")return `<section class="card chcard none"><span class="small muted">No characters found online for this book.</span><button class="btn" data-ch-add>Add someone</button></section>`;
-    if(!canFind)return "";
-    return `<section class="card chcard none"><div class="grow1"><b class="small">Characters</b><div class="small muted">From Wikipedia, read by Claude · about 1–2 cents</div></div><button class="btn" data-ch-find>Find characters</button></section>`;
+    if(!["Reading","Read","DNF"].includes(b.status)&&!b.chars)return "";
+    if(isNonFiction(b))return "";
+    const why=b.chars==="none"||b.chars==="done"?"No characters were found online for this book. Add them yourself:"
+      :failed?"The search online didn’t work this time. Try again, or add them yourself:"
+      :canFind?"Claude can list them from the book’s blurb and what it knows about the book (about half a cent), or add them yourself.":"Add the people you meet in this book.";
+    return `<section class="card chcard"><h3 class="sectlabel">Characters</h3><p class="small muted chwhy">${why}</p>
+      <div class="chacts">${canFind&&b.chars!=="none"&&b.chars!=="done"?`<button class="btn primary" data-ch-find>${failed?"Try again":"Find characters"}</button>`:""}<button class="btn${canFind&&b.chars!=="none"&&b.chars!=="done"?"":" primary"}" data-ch-add>Add someone</button><button class="btn" data-ch-many>Add several</button></div></section>`;
   }
   const rs=readingState(g),col=groupColors(d.characters),reading=b.status==="Reading";
   const known=c=>isKnown(c,rs,g.num)||b.status==="Read";
@@ -2273,7 +2297,7 @@ function charCardHtml(b){
     <div class="chhead"><h3 class="sectlabel">Characters · ${inBook.length}</h3>${reading?`<span class="small muted">${metN} of ${inBook.length} met · no spoilers</span>`:""}</div>
     <div class="chlist">${rows}</div>
     ${list.length>shown.length?`<button class="linkbtn" data-ch-all>Show all ${list.length}</button>`:""}
-    <div class="chacts">${d.characters.length>=2?`<button class="btn primary" data-ch-map>Who’s who</button>`:""}<button class="btn" data-ch-add>Add someone</button>${b.status==="Read"&&b.chars!=="done"&&hasClaude?`<button class="btn" data-ch-find>Find all characters</button>`:""}</div>
+    <div class="chacts">${d.characters.length>=2?`<button class="btn primary" data-ch-map>Who’s who</button>`:""}<button class="btn" data-ch-add>Add someone</button><button class="btn" data-ch-many>Add several</button>${b.status==="Read"&&b.chars!=="done"&&hasClaude?`<button class="btn" data-ch-find>Find all characters</button>`:""}</div>
   </section>`;
 }
 function paintCharCard(v,b){const a=$("#chArea",v);if(!a)return;a.innerHTML=charCardHtml(b);paintAv(a)}
@@ -2290,6 +2314,7 @@ async function wireCharCard(v,b){
     const cur=books.find(x=>x.id===b.id)||b;
     if(t.hasAttribute("data-ch-find")){findChars(cur,cur.status==="Read"?"finish":"start");return}
     if(t.hasAttribute("data-ch-add")){openCharForm(g,null);return}
+    if(t.hasAttribute("data-ch-many")){openCharMany(g);return}
     if(t.hasAttribute("data-ch-map")){openCharView(g,"map");return}
     if(t.hasAttribute("data-ch-all")){v.dataset.chAll="1";paintCharCard(v,cur);return}
     if(t.dataset.chOpen){openCharacter(g,t.dataset.chOpen);return}
@@ -2303,16 +2328,19 @@ async function findChars(b,mode,o={}){
   chFinding.add(k);refreshCharCards();
   if(!o.quiet)toast("Finding the characters…");
   try{
+    // The blurb is what Claude reads first: when the book has none yet, look for one online (free) and save it.
+    if(!String(b.synopsis||"").trim()){const sy=await findSynopsis(b).catch(()=>null);if(sy){try{b=await quickSave(books.find(x=>x.id===b.id)||b,{synopsis:sy.text})}catch(e){}}}
     const d=await api("chars_find",{id:b.id,mode});charsOld=false;
     setCharData(d);(d.books||[]).forEach(upsertBook);if(d.budget){budget=d.budget;store.set("bc-budget",budget)}
-    const src=/^Wikipedia/.test(d.source||"")?" on Wikipedia":"";
+    const src=/blurb/.test(d.source||"")?" from the blurb":"";
     toast(d.found?(mode==="start"?`${chTimes(d.found)} to meet in “${b.title}”${src}`:`${chTimes(d.found)} found${src}`):"No characters found online. You can add them yourself.");
-  }catch(e){if(e.code==="unknown_action")charsOld=true;if(!o.quiet||e.code!=="budget")handleApiError(e,"Couldn’t find the characters")}
+    chFailed.delete(k);
+  }catch(e){if(e.code==="unknown_action")charsOld=true;else chFailed.add(k);if(!o.quiet||e.code!=="budget")handleApiError(e,"Couldn’t find the characters")}
   finally{chFinding.delete(k);refreshCharCards()}
 }
 // Starting or finishing a book looks its characters up by itself (when Claude and the budget allow).
 function autoChars(b,mode){
-  if(!b||!conn||!hasClaude||!budgetLeft()||charsOld||!owned(b))return;
+  if(!b||!conn||!hasClaude||!budgetLeft()||charsOld||!owned(b)||isNonFiction(b))return;
   if(mode==="start"&&b.chars)return;
   if(mode==="finish"&&(b.chars==="done"||b.chars==="none"))return;
   findChars(b,mode,{quiet:true});
@@ -2361,7 +2389,7 @@ function openCharacter(g,id){
 function openCharForm(g,c){
   const d=charData(g)||{characters:[]},rs=readingState(g);
   const groups=[...new Set(d.characters.map(x=>x.group).filter(Boolean))].sort();
-  const num=rs.reading||rs.readUpTo||1;
+  const num=g.num||rs.reading||rs.readUpTo||1; // the book whose page you came from
   const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(g.name)}</div><h2>${c?"Edit "+esc(c.name):"Add someone"}</h2></div><button class="x" data-close aria-label="Close">×</button></div>
     <form class="grid" id="chForm" novalidate>
       <div class="f"><label for="cfName">Name</label><input id="cfName" maxlength="80" required value="${esc(c?c.name:"")}" autocomplete="off"></div>
@@ -2382,6 +2410,20 @@ function openCharForm(g,c){
     if(saved)openCharacter(g,saved.id);else e.target.disabled=false;
   };
   $("#cfName",s).focus();
+}
+// Several people at once: one per line, "Name - who they are" (the part after the dash is optional).
+function openCharMany(g){
+  const s=sheet(`<div class="sheet-head"><div><div class="eyebrow">${esc(g.name)}${g.isSeries?` · book ${esc(g.num)}`:""}</div><h2>Add several</h2></div><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="f"><label for="cmList">One person per line. After a dash, who they are (optional).</label><textarea id="cmList" class="chmany" maxlength="6000" placeholder="Murderbot - security unit, the narrator&#10;Dr. Mensah - leads the survey team&#10;Gurathin"></textarea></div>
+    <p class="small muted" id="cmCount">Nobody yet.</p><p class="small err" id="cmMsg"></p>
+    <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cmSave" disabled>Add</button></div>`);
+  const ta=$("#cmList",s),parse=()=>ta.value.split("\n").map(l=>l.replace(/^\s*[-•*\d.)]+\s+/,"").trim()).filter(Boolean).map(l=>{const m=l.match(/^(.+?)(?:\s*[:–—]|\s+-)\s+(.+)$/);return m?{name:m[1].trim(),role:m[2].trim()}:{name:l,role:""}}).filter(x=>x.name.length<=80).slice(0,60);
+  ta.oninput=()=>{const n=parse().length;$("#cmCount",s).textContent=n?`${n} ${n===1?"person":"people"} to add`:"Nobody yet.";$("#cmSave",s).disabled=!n};
+  $("#cmSave",s).onclick=async e=>{const list=parse();if(!list.length)return;e.target.disabled=true;
+    try{const d=await api("chars_add",{series:g.name,characters:list,book:g.num});setCharData(d);closeSheet();refreshCharCards();
+      toast(`${d.added} added${d.updated?` · ${d.updated} already there, now in this book too`:""}`)}
+    catch(err){e.target.disabled=false;$("#cmMsg",s).textContent=err.code==="unknown_action"?"Update your Google script first (New version).":err.message}};
+  ta.focus();
 }
 function openLinkForm(g,c){
   const d=charData(g),rs=readingState(g);
