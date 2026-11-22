@@ -41,7 +41,7 @@ const ICON={
   star:`<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/></svg>`,
   pen:`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
 };
-const APP_VERSION="26";
+const APP_VERSION="27";
 let toastT;
 function toast(msg){clearTimeout(toastT);let t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.append(t)}t.textContent=msg;t.hidden=false;toastT=setTimeout(()=>t.hidden=true,Math.max(3000,msg.length*60))}
 
@@ -769,9 +769,15 @@ const yearIn=s=>{const m=String(s??"").match(/\b(1[0-9]{3}|20[0-9]{2})\b/);retur
 const nameWords=s=>norm(s).split(/[^a-z0-9]+/).filter(w=>w.length>=3);
 const sameAuthor=(label,author)=>{const a=nameWords(author);if(!a.length)return true;const l=nameWords(label);return a.some(w=>l.includes(w))};
 // "Os Pilares da Terra (The Pillars of the Earth)" → try the original title first, then the title as written.
+// Titles to search for: the original title in brackets first, then the title itself, then the part after a series
+// prefix ("The Murderbot Diaries: Network Effect" → "Network Effect"). Edition words in brackets are left out.
+const EDITION_WORDS=/^(omnibus|box(ed)? set|boxset|collection|.*\bedition|hardcover|hardback|paperback|illustrated|deluxe|special|collector'?s|anniversary|unabridged|complete|remastered|vol(ume)?\.? ?\d+|book ?\d+|#?\d+|livro ?\d+|edi[cç][aã]o.*)$/i;
 function titleVariants(t){
-  t=String(t||"").trim();const inner=(t.match(/\(([^()]{3,})\)?\s*$/)||[])[1];const main=t.replace(/\s*\(.*$/,"").trim();
-  return [...new Set([inner&&inner.trim(),main].filter(Boolean))].slice(0,2);
+  t=String(t||"").trim();const out=[];let m;
+  while((m=t.match(/\s*[(\[]([^()\[\]]*)[)\]]?\s*$/))&&m.index>0){const inner=m[1].trim();if(inner.length>=3&&!EDITION_WORDS.test(inner))out.push(inner);t=t.slice(0,m.index).trim()}
+  out.push(t);
+  const c=t.match(/^(.{3,}?)\s*:\s+(.{3,})$/);if(c)out.push(c[2].trim());
+  return [...new Set(out.filter(Boolean))].slice(0,3);
 }
 async function wikidataFirst(title,author){
   for(const q of titleVariants(title)){

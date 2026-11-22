@@ -1,6 +1,6 @@
 // Book Catalog: keeps the app's own files on the phone so it opens straight away.
 // Your books and photos are NOT stored here: they always come from your Google script.
-const VERSION = "26";
+const VERSION = "27";
 const SHELL = "bc-shell-v" + VERSION, FONTS = "bc-fonts-v1";
 const FILES = ["./", "app.js?v=" + VERSION, "styles.css?v=" + VERSION, "stats-core.js?v=" + VERSION,
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png"];
